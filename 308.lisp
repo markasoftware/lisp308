@@ -1,13 +1,5 @@
-;; This buffer is for text that is not saved, and for Lisp evaluation.
-;; To create a file, visit it with C-x C-f and enter text in its buffer.
-
-;; (defun transpose (mat)
-;;   (let ((res (loop for i in (car mat) collecting ())))
-;;     (loop for row in mat
-;;        do (loop for n from 0
-;;              for col in row
-;;              do (push col (nth n res))))
-;;     res))
+;; The n- methods in this file mess with the top-level structure of the matrix
+;; passed in. (copy-list) is sufficient to protect the original matrix.
 
 (ql:quickload :alexandria)
 (use-package :alexandria)
@@ -25,22 +17,24 @@
 (defun n+-row (mat i1 i2 r)
   "Add row i1*r to i2 in mat, in-place."
   (assert (not (eq i1 i2)))
-  (loop
-     with i1r = (mapcar (curry #'* r) (nth i1 mat))
-     for c on (nth i2 mat)
-     for i1rr in i1r
-     do (rplaca c (+ (car c) i1rr)))
+  (setf (nth i2 mat)
+        (loop
+           with i1r = (mapcar (curry #'* r) (nth i1 mat))
+           for c in (nth i2 mat)
+           for i1rr in i1r
+           collect (+ c i1rr)))
   mat)
 
 (defun n*-row (mat i r)
   (assert (not (zerop r)))
   (setf (nth i mat) (mapcar (curry #'* r) (nth i mat))))
 
-(defun matrix-multiply (a b)
+(defun mat* (a b)
   (let* ((b-t (transpose b))
          (m (length a))
          (p (length b))
          (n (length (car b))))
+    (assert (= p (length (car a))))
     (loop for i from 0 below m
        collect (loop for k from 0 below n
                   collect (apply #'+
@@ -51,7 +45,7 @@
   "Swap rows in mat so that the pivots do not move left as you move down."
   ;; fun fact: sort is destructive by default.
   (sort mat #'< :key (lambda (row)
-                       (or (position-if (compose #'not #'zerop) row)
+                       (or (position-if-not #'zerop row)
                            (length row)))))
 
 (defun npivot (mat &optional self-divide)
@@ -60,7 +54,7 @@
      for row in mat
      for rowcdr on mat
      for row-i from 0
-     for pivot-col = (position-if (compose #'not #'zerop) row)
+     for pivot-col = (position-if-not #'zerop row)
      when pivot-col
      do 
        (loop
@@ -74,18 +68,89 @@
 
 (defun nreduce-ef (mat)
   "Reduce the given matrix to echelon form."
-  (nswaparoo mat)
-  (npivot mat))
+  ;; Wait a second, don't we have to reorder the rows /before/ we do the pivot?
+  ;; No! In fact, swapping only before the pivot won't even necessarily give us
+  ;; the matrix we want! Why? Imagine row 1 completely eliminates row 2 --
+  ;; turning it into a zero row. But row 3 is nonempty. Now, after processing
+  ;; row 1, the matrix is not "sorted" and further processing is not how we'd do
+  ;; it on paper. We can fix this by swaparoo'ing after every elimination, but
+  ;; this works well enough (although the result won't always be the same, it
+  ;; will at least be in echelon form): The first row to contain a leading term
+  ;; in a certain column will eliminate all the rest.
+  (nswaparoo (npivot mat)))
 
 (defun nreduce-ref (mat)
   "Reduce the given matrix to reduced echelon form. You must use the return
 value and not re-use the argument."
   (nreverse (npivot (nreverse (nreduce-ef mat)) t)))
 
+(defun invert (mat)
+  (assert (nonsingular-p mat))
+  ;; Because we've verified that the matrix is nonsingular, we know all the
+  ;; leading terms after row reduction will occur left of the identity columns
+  ;; we are adding, so that the identity columns will not affect the row
+  ;; reduction.
+
+  ;; TODO: a routine for generating the elementary matrix for row reduction
+  ;; rather than just a function for doing it.
+  (let* ((n (length mat))
+         (id (make-identity n))
+         (wide (loop for a in mat for b in id collect (append a b)))
+         (wide-ref (nreduce-ref wide))
+         (skinny (loop for row in wide-ref collect (nthcdr n row))))
+    skinny))
+
+(defun leading-var-pos (mat)
+  "Return a list of (i . j) pairs indicating the location of each pivot in the
+given REF matrix."
+  (loop
+     for row in mat
+     for i from 0
+     for j = (position 1 row)
+     when j
+     collect (cons i j)))
+
 (defun nullspace-basis (mat)
-  "Return a basis of the nullspace of the linear transformation represented by
-  the given matrix.")
+  "Return a basis (list of vectors) of the nullspace of the linear
+  transformation represented by the given matrix. I.e, the row space of the
+  returned matrix is the kernel of the given matrix."
+  (or
+   (loop
+      with ref = (nreduce-ref (copy-list mat))
+      with width = (length (car mat))
+      with tref = (transpose ref)
+      with leaders = (leading-var-pos ref)
+      with free-js = (nset-difference
+                    (loop for i from 0 below width collect i)
+                    (mapcar #'cdr leaders))
+      for free-j in free-js
+      for free-col = (nth free-j tref)
+      collect (loop
+                 for result-j from 0 below width
+                 for leader-cons =
+                   (find-if (compose (curry #'eq result-j) #'cdr) leaders)
+                 collect (cond
+                           ((= result-j free-j) 1)
+                           (leader-cons (- (nth (car leader-cons) free-col)))
+                           (t 0)))) ; it is a free column
+   ;; When there are no free variables, we give the basis for the trivial
+   ;; subspace of the domain
+   (list (loop for i from 0 below (length (car mat)) collect 0))))
+
+(setf (symbol-function 'kernel-basis) #'nullspace-basis)
 
 (defun range-basis (mat)
   "Return a basis for the image of the linear transformation represented by the
   given matrix.")
+
+(defun make-identity (n)
+  (loop
+     for i from 0 below n
+     collect (loop for k from 0 below n collect (if (= i k) 1 0))))
+
+(defun identity-p (mat)
+  (let ((real-id (make-identity (length mat))))
+    (equal real-id mat)))
+
+(defun nonsingular-p (mat)
+  (identity-p (nreduce-ref (copy-list mat))))
