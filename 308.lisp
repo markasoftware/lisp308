@@ -14,20 +14,37 @@
 
 (setf (symbol-function 'transpose) #'transpose-functional)
 
-(defun n+-row (mat i1 i2 r)
-  "Add row i1*r to i2 in mat, in-place."
-  (assert (not (eq i1 i2)))
-  (setf (nth i2 mat)
-        (loop
-           with i1r = (mapcar (curry #'* r) (nth i1 mat))
-           for c in (nth i2 mat)
-           for i1rr in i1r
-           collect (+ c i1rr)))
-  mat)
+(defmacro loop-2d (i-var j-var height width &body body)
+  `(loop for ,i-var from 0 below ,height
+      collect (loop for ,j-var from 0 below ,width
+                   collect (progn ,@body))))
 
-(defun n*-row (mat i r)
+(defun elem-swap (n i1 i2)
+  "Create an elementary matrix that swaps rows i1 and i2 (0-indexed). n is the
+  number of rows in the matrix that will be multiplied by this elementary one,
+  or the number of columns (and rows) in the returned matrix."
+  (loop-2d i j n n
+       (cond
+         ((= i i1) (if (= j i2) 1 0))
+         ((= i i2) (if (= j i1) 1 0))
+         ((= j i) 1)
+         (t 0))))
+
+(defun elem+ (n i1 i2 &optional (r 1))
+  "Create an elementary matrix that adds i1*r to i2 (i1 and i2 are rows)."
+  (assert (not (= i1 i2)))
   (assert (not (zerop r)))
-  (setf (nth i mat) (mapcar (curry #'* r) (nth i mat))))
+  (loop-2d i j n n
+       (cond
+         ((= j i) 1)
+         ((and (= i i2) (= j i1)) r)
+         (t 0))))
+
+(defun elem* (n i1 r)
+  "Create an elementary matrix that multiplies row i by r"
+  (assert (not (zerop r)))
+  (loop-2d i j n n
+       (if (= i j) (if (= i i1) r 1) 0)))
 
 (defun mat* (a b)
   (let* ((b-t (transpose b))
@@ -35,12 +52,12 @@
          (p (length b))
          (n (length (car b))))
     (assert (= p (length (car a))))
-    (loop for i from 0 below m
-       collect (loop for k from 0 below n
-                  collect (apply #'+
-                                 (loop for j from 0 below p
-                                    collect (* (nth j (nth i a))
-                                               (nth j (nth k b-t)))))))))
+    (loop-2d i k m n
+         (apply #'+
+                (loop for j from 0 below p
+                   collect (* (nth j (nth i a))
+                              (nth j (nth k b-t))))))))
+
 (defun nswaparoo (mat)
   "Swap rows in mat so that the pivots do not move left as you move down."
   ;; fun fact: sort is destructive by default.
@@ -49,7 +66,9 @@
                            (length row)))))
 
 (defun npivot (mat &optional self-divide)
-  "Eliminates on pivots, according to the order of the matrix."
+  "Eliminates on pivots, according to the order of the matrix. Returns the
+modified matrix (though it may modify the argument too!) and the elementary
+matrix to perform the pivot."
   (loop
      for row in mat
      for rowcdr on mat
@@ -66,6 +85,22 @@
          (n*-row mat row-i (/ (nth pivot-col row)))))
   mat)
 
+(defun nreverse-mat (mat)
+  "Reverses the order of rows in a matrix"
+  ;; And yes, this /is/ easier than multiplying a whole bunch of swap matrices
+  ;; together, thank you for asking!
+  (values (nreverse mat) (nreverse (make-identity (length mat)))))
+
+(defun chain-elems (funs mat &optional (elem (make-identity (length mat))))
+  "funs should be a list of functions that take a matrix as an argument, then
+  returned a modified version of that matrix and the elementary matrix that
+  would do the same thing they just did. The first function in the list is
+  executed first, the opposite of function notation (more like piping)."
+  (if funs
+      (multiple-value-bind (mat-new elem-single) (funcall (car funs) mat)
+        (chain-elems (cdr funs) mat-new (mat* elem-single elem)))
+      (values mat elem)))
+
 (defun nreduce-ef (mat)
   "Reduce the given matrix to echelon form."
   ;; Wait a second, don't we have to reorder the rows /before/ we do the pivot?
@@ -77,11 +112,12 @@
   ;; this works well enough (although the result won't always be the same, it
   ;; will at least be in echelon form): The first row to contain a leading term
   ;; in a certain column will eliminate all the rest.
-  (nswaparoo (npivot mat)))
+  (chain-elems '(#'npivot #'nswaparoo) mat))
 
 (defun nreduce-ref (mat)
   "Reduce the given matrix to reduced echelon form. You must use the return
 value and not re-use the argument."
+  (chain-elems )
   (nreverse (npivot (nreverse (nreduce-ef mat)) t)))
 
 (defun invert (mat)
@@ -114,6 +150,11 @@ given REF matrix."
   "Return a basis (list of vectors) of the nullspace of the linear
   transformation represented by the given matrix. I.e, the row space of the
   returned matrix is the kernel of the given matrix."
+  ;; Do we need to run, say, (column-space-basis) on the output to eliminate
+  ;; linearly dependent vectors in the return value? No! The dimension of the
+  ;; nullspace is equal to the number of free variables, and this procedure
+  ;; returns one vector for each free variable, so if they span the nullspace
+  ;; (and they do) they form a basis.
   (or
    (loop
       with ref = (nreduce-ref (copy-list mat))
@@ -166,9 +207,7 @@ given REF matrix."
 (setf (symbol-function 'column-space-basis) #'column-space-basis-subset)
 
 (defun make-identity (n)
-  (loop
-     for i from 0 below n
-     collect (loop for k from 0 below n collect (if (= i k) 1 0))))
+  (loop-2d i j n n (if (= i j) 1 0)))
 
 (defun identity-p (mat)
   (equal (make-identity (length mat)) mat))
