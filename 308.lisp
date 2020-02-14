@@ -139,9 +139,31 @@ given REF matrix."
 
 (setf (symbol-function 'kernel-basis) #'nullspace-basis)
 
-(defun range-basis (mat)
-  "Return a basis for the image of the linear transformation represented by the
-  given matrix.")
+(defun column-space-basis-subset (mat)
+    "Find a basis for the matrix's column space that is a subset of that
+    matrix's column vectors. Returns a list of those vectors (i.e, if the return
+    value is treated as a matrix, its row space is the argument's column
+    space)."
+    (or
+     (loop
+        with leader-js = (mapcar #'cdr (leading-var-pos
+                                        (nreduce-ref (copy-list mat))))
+        for col in (transpose mat)
+        for j from 0
+        when (and leader-js (= j (car leader-js)))
+        collect (progn
+                  (setq leader-js (cdr leader-js))
+                  col))
+     (list (loop for i from 0 below (length mat) collect 0))))
+
+(defun column-space-basis-row-method (mat)
+  "Find a basis for the matrix's column space that may or may not be a subset of
+  the matrix's column vectors."
+  (or
+   (remove-if (curry #'every #'zerop) (nreduce-ref (transpose mat)))
+   (list (loop for i from 0 below (length mat) collect 0))))
+
+(setf (symbol-function 'column-space-basis) #'column-space-basis-subset)
 
 (defun make-identity (n)
   (loop
@@ -149,8 +171,7 @@ given REF matrix."
      collect (loop for k from 0 below n collect (if (= i k) 1 0))))
 
 (defun identity-p (mat)
-  (let ((real-id (make-identity (length mat))))
-    (equal real-id mat)))
+  (equal (make-identity (length mat)) mat))
 
 (defun nonsingular-p (mat)
   (identity-p (nreduce-ref (copy-list mat))))
