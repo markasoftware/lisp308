@@ -143,21 +143,11 @@ value and not re-use the argument."
    (list #'nreduce-ef #'mat-reverse (curry #'npivot t) #'mat-reverse)
    mat))
 
+;; TODO: a different (invert) that uses determinants
 (defun invert (mat)
-  (assert (nonsingular-p mat))
-  ;; Because we've verified that the matrix is nonsingular, we know all the
-  ;; leading terms after row reduction will occur left of the identity columns
-  ;; we are adding, so that the identity columns will not affect the row
-  ;; reduction.
-
-  ;; TODO: a routine for generating the elementary matrix for row reduction
-  ;; rather than just a function for doing it.
-  (let* ((n (length mat))
-         (id (make-identity n))
-         (wide (loop for a in mat for b in id collect (append a b)))
-         (wide-ref (nreduce-ref wide))
-         (skinny (loop for row in wide-ref collect (nthcdr n row))))
-    skinny))
+  (multiple-value-bind (ref elem) (nreduce-ref (copy-list mat))
+    (assert (identity-p ref))
+    (mat* elem (make-identity (length ref)))))
 
 (defun leading-var-pos (mat)
   "Return a list of (i . j) pairs indicating the location of each pivot in the
