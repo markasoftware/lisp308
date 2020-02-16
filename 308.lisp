@@ -33,7 +33,6 @@
 (defun elem+ (n i1 i2 &optional (r 1))
   "Create an elementary matrix that adds i1*r to i2 (i1 and i2 are rows)."
   (assert (not (= i1 i2)))
-  (assert (not (zerop r)))
   (loop-2d i j n n
        (cond
          ((= j i) 1)
@@ -58,18 +57,38 @@
                    collect (* (nth j (nth i a))
                               (nth j (nth k b-t))))))))
 
+(defmacro elemf (mat-place elem-place &body body)
+  (with-gensyms (v1 v2 mat elem)
+    `(multiple-value-bind (,v1 ,v2) (progn ,@body)
+       (let ((,mat (if ,v2 ,v1 (mat* ,v1 ,mat-place)))
+             (,elem (or ,v2 ,v1)))
+         (setf ,mat-place ,mat)
+         (setf ,elem-place (mat* ,elem ,elem-place))))))
+
 (defun nswaparoo (mat)
   "Swap rows in mat so that the pivots do not move left as you move down."
-  ;; fun fact: sort is destructive by default.
-  (sort mat #'< :key (lambda (row)
-                       (or (position-if-not #'zerop row)
-                           (length row)))))
+  ;; time to implement bubble sort!
+  (let* ((n (length mat))
+         (elem (make-identity n)))
 
-(defun npivot (mat &optional self-divide)
+    (flet ((key (row)
+             (or (position-if-not #'zerop row)
+                 (length row))))
+
+      (dotimes (i n)
+        (do ((k (1+ i) (1+ k))) ((= k n)) 
+          (when (< (key (nth k mat)) (key (nth i mat)))
+            (elemf mat elem (elem-swap n i k)))))
+
+      (values mat elem))))
+
+(defun npivot (self-divide mat)
   "Eliminates on pivots, according to the order of the matrix. Returns the
 modified matrix (though it may modify the argument too!) and the elementary
 matrix to perform the pivot."
   (loop
+     with n = (length mat)
+     with elem = (make-identity n)
      for row in mat
      for rowcdr on mat
      for row-i from 0
@@ -79,27 +98,30 @@ matrix to perform the pivot."
        (loop
           for lower-row in (cdr rowcdr)
           for row-k from (1+ row-i)
-          do (n+-row mat row-i row-k (- (/ (nth pivot-col lower-row)
-                                           (nth pivot-col row)))))
+          do (elemf mat elem
+               (elem+ n row-i row-k (- (/ (nth pivot-col lower-row)
+                                          (nth pivot-col row))))))
        (when self-divide
-         (n*-row mat row-i (/ (nth pivot-col row)))))
-  mat)
+         (elemf mat elem
+           (elem* n row-i (/ (nth pivot-col row)))))
+     finally (return (values mat elem))))
 
-(defun nreverse-mat (mat)
-  "Reverses the order of rows in a matrix"
+(defun elem-reverse (n)
+  "Returns an elementary matrix that reverses the rows of a matrix."
   ;; And yes, this /is/ easier than multiplying a whole bunch of swap matrices
   ;; together, thank you for asking!
-  (values (nreverse mat) (nreverse (make-identity (length mat)))))
+  (nreverse (make-identity n)))
 
-(defun chain-elems (funs mat &optional (elem (make-identity (length mat))))
+(defun mat-reverse (mat)
+  (elem-reverse (length mat)))
+
+(defun pipe-elems (funs mat &optional (elem (make-identity (length mat))))
   "funs should be a list of functions that take a matrix as an argument, then
   returned a modified version of that matrix and the elementary matrix that
   would do the same thing they just did. The first function in the list is
   executed first, the opposite of function notation (more like piping)."
-  (if funs
-      (multiple-value-bind (mat-new elem-single) (funcall (car funs) mat)
-        (chain-elems (cdr funs) mat-new (mat* elem-single elem)))
-      (values mat elem)))
+  (loop for fun in funs do (elemf mat elem (funcall fun mat)))
+  (values mat elem))
 
 (defun nreduce-ef (mat)
   "Reduce the given matrix to echelon form."
@@ -112,13 +134,14 @@ matrix to perform the pivot."
   ;; this works well enough (although the result won't always be the same, it
   ;; will at least be in echelon form): The first row to contain a leading term
   ;; in a certain column will eliminate all the rest.
-  (chain-elems '(#'npivot #'nswaparoo) mat))
+  (pipe-elems (list (curry #'npivot nil) #'nswaparoo) mat))
 
 (defun nreduce-ref (mat)
   "Reduce the given matrix to reduced echelon form. You must use the return
 value and not re-use the argument."
-  (chain-elems )
-  (nreverse (npivot (nreverse (nreduce-ef mat)) t)))
+  (pipe-elems
+   (list #'nreduce-ef #'mat-reverse (curry #'npivot t) #'mat-reverse)
+   mat))
 
 (defun invert (mat)
   (assert (nonsingular-p mat))
