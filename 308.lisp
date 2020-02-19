@@ -89,12 +89,13 @@ matrix to perform the pivot."
   (loop
      with n = (length mat)
      with elem = (make-identity n)
-     for row in mat
-     for rowcdr on mat
-     for row-i from 0
+     for row-i from 0 below n
+     ;; TODO: Can we avoid nthcdr and be more consy?
+     for rowcdr = (nthcdr row-i mat)
+     for row = (car rowcdr)
      for pivot-col = (position-if-not #'zerop row)
      when pivot-col
-     do 
+     do
        (loop
           for lower-row in (cdr rowcdr)
           for row-k from (1+ row-i)
