@@ -57,6 +57,17 @@
                    collect (* (nth j (nth i a))
                               (nth j (nth k b-t))))))))
 
+(defun mat+ (a &rest bs)
+  (if bs
+      (let ((b (apply #'mat+ bs)))
+        (assert (= (length a) (length b)))
+        (assert (= (length (car a)) (length (car b))))
+        (mapcar (lambda (aa bb) (mapcar #'+ aa bb)) a b))
+      a))
+
+(defun mat-scalar* (mat r &rest rs)
+  (mapcar (curry #'mapcar (apply #'curry #'* r rs)) mat))
+
 (defmacro elemf (mat-place elem-place &body body)
   (with-gensyms (v1 v2 mat elem)
     `(multiple-value-bind (,v1 ,v2) (progn ,@body)
@@ -220,6 +231,9 @@ given REF matrix."
 
 (setf (symbol-function 'column-space-basis) #'column-space-basis-subset)
 
+(defun row-space-basis (mat)
+  (column-space-basis (transpose mat)))
+
 (defun make-identity (n)
   (loop-2d i j n n (if (= i j) 1 0)))
 
@@ -228,3 +242,9 @@ given REF matrix."
 
 (defun nonsingular-p (mat)
   (identity-p (nreduce-ref (copy-list mat))))
+
+(defun rank (mat)
+  (length (leading-var-pos (copy-list mat))))
+
+(defun nullity (mat)
+  (- (length (car mat)) (rank mat)))
