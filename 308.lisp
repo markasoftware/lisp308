@@ -68,6 +68,11 @@
 (defun mat-scalar* (mat r &rest rs)
   (mapcar (curry #'mapcar (apply #'curry #'* r rs)) mat))
 
+(defun mat-append-cols (mat &rest mats)
+  "Append mats to mat, column-wise. I.e, if mat1 is 3x3 and mat2 is 3x3, output
+   will be 3x6."
+  (apply (curry #'mapcar #'append) (cons mat mats)))
+
 (defmacro elemf (mat-place elem-place &body body)
   (with-gensyms (v1 v2 mat elem)
     `(multiple-value-bind (,v1 ,v2) (progn ,@body)
@@ -154,6 +159,30 @@ value and not re-use the argument."
   (pipe-elems
    (list #'nreduce-ef #'mat-reverse (curry #'npivot t) #'mat-reverse)
    mat))
+
+(defun mat-augment (mat augmented-col)
+  "Plops the given column onto the end of mat. A thin wrapper over
+  mat-append-cols."
+  (mat-append-cols mat (transpose (list augmented-col))))
+
+(defun solve (mat)
+  "Return a solution to the system of equations represented by mat. The last
+  column of mat is taken to be the augmented part of an augmented matrix. Will
+  return a solution where all free variables are zero. Returns nil if the system
+  is inconsistent."
+  (let* ((ref (nreduce-ref mat))
+         (augmented-col (lastcar (transpose ref)))
+         (leaders (leading-var-pos ref)))
+    ;; leading term in last col -> inconsistent
+    (unless (find-if (compose (curry #'= (1- (length (car mat)))) #'cdr) leaders)
+      (loop
+         for j from 0 below (1- (length (car mat))) ; 1- to skip augmented col
+         collect (if (and leaders (= (cdar leaders) j))
+                     (prog1
+                         (car augmented-col)
+                       (setf leaders (cdr leaders))
+                       (setf augmented-col (cdr augmented-col)))
+                     0)))))
 
 ;; TODO: a different (invert) that uses determinants
 (defun invert (mat)
