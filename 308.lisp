@@ -57,6 +57,11 @@
                    collect (* (nth j (nth i a))
                               (nth j (nth k b-t))))))))
 
+(defun mat-vec* (mat vec)
+  "Take the row vector vec, convert to a column vector and multiply by mat, then
+   convert back to a row vector."
+  (car (transpose (mat* mat (transpose (list vec))))))
+
 (defun mat+ (a &rest bs)
   (if bs
       (let ((b (apply #'mat+ bs)))
@@ -183,6 +188,9 @@ value and not re-use the argument."
                        (setf leaders (cdr leaders))
                        (setf augmented-col (cdr augmented-col)))
                      0)))))
+
+(defun make-change-of-basis-mat (old-basis new-basis)
+  (mat* (invert (transpose new-basis)) (transpose old-basis)))
 
 ;; TODO: a different (invert) that uses determinants
 (defun invert (mat)
