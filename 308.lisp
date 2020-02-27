@@ -19,31 +19,42 @@
       collect (loop for ,j-var from 0 below ,width
                    collect (progn ,@body))))
 
-(defun elem-swap (n i1 i2)
-  "Create an elementary matrix that swaps rows i1 and i2 (0-indexed). n is the
-  number of rows in the matrix that will be multiplied by this elementary one,
-  or the number of columns (and rows) in the returned matrix."
-  (loop-2d i j n n
-       (cond
-         ((= i i1) (if (= j i2) 1 0))
-         ((= i i2) (if (= j i1) 1 0))
-         ((= j i) 1)
-         (t 0))))
+(defun perform-row-op (mat op)
+  (ecase (car op)
+    (:swap                              ; (:swap i1 i2)
+     (assert (not (= (second op) (third op))))
+     (loop
+        for row in mat
+        for i from 0
+        collect (cond
+                  ((= i (second op)) (nth (third op) mat))
+                  ((= i (third op)) (nth (second op) mat))
+                  (t row))))
+    (:+                                 ; (:+ r i1 i2)
+     (assert (not (= (third op) (fourth op))))
+     (loop
+        for row in mat
+        for i from 0
+        collect (if (= i (fourth op))
+                    (loop
+                       for v2 in row
+                       for v1 in (nth (third op) mat)
+                       collect (+ (* (second op) v1) v2))
+                    row)))
 
-(defun elem+ (n i1 i2 &optional (r 1))
-  "Create an elementary matrix that adds i1*r to i2 (i1 and i2 are rows)."
-  (assert (not (= i1 i2)))
-  (loop-2d i j n n
-       (cond
-         ((= j i) 1)
-         ((and (= i i2) (= j i1)) r)
-         (t 0))))
+    (:*                                 ; (:* r i)
+     (assert (not (zerop (second op))))
+     (loop
+        for row in mat
+        for i from 0
+        collect (if (= i (third op))
+                    (mapcar (curry #'* (second op)) row)
+                    row)))))
 
-(defun elem* (n i1 r)
-  "Create an elementary matrix that multiplies row i by r"
-  (assert (not (zerop r)))
-  (loop-2d i j n n
-       (if (= i j) (if (= i i1) r 1) 0)))
+(defun perform-row-ops (mat ops)
+  (if ops
+      (perform-row-ops (perform-row-op mat (car ops)) (cdr ops))
+      mat))
 
 (defun mat* (a b)
   (let* ((b-t (transpose b))
@@ -78,19 +89,16 @@
    will be 3x6."
   (apply (curry #'mapcar #'append) (cons mat mats)))
 
-(defmacro elemf (mat-place elem-place &body body)
-  (with-gensyms (v1 v2 mat elem)
-    `(multiple-value-bind (,v1 ,v2) (progn ,@body)
-       (let ((,mat (if ,v2 ,v1 (mat* ,v1 ,mat-place)))
-             (,elem (or ,v2 ,v1)))
-         (setf ,mat-place ,mat)
-         (setf ,elem-place (mat* ,elem ,elem-place))))))
+(defmacro row-opf (mat-place op-list-place op)
+  (with-gensyms (evaled-op)
+    `(let ((,evaled-op (list ,@op)))
+       (setf ,op-list-place (cons ,evaled-op ,op-list-place))
+       (setf ,mat-place (perform-row-op ,mat-place ,evaled-op)))))
 
-(defun nswaparoo (mat)
+(defun swaparoo (mat &optional seq)
   "Swap rows in mat so that the pivots do not move left as you move down."
   ;; time to implement bubble sort!
-  (let* ((n (length mat))
-         (elem (make-identity n)))
+  (let ((n (length mat)))
 
     (flet ((key (row)
              (or (position-if-not #'zerop row)
@@ -99,17 +107,14 @@
       (dotimes (i n)
         (do ((k (1+ i) (1+ k))) ((= k n)) 
           (when (< (key (nth k mat)) (key (nth i mat)))
-            (elemf mat elem (elem-swap n i k)))))
+            (row-opf mat seq (:swap i k)))))
 
-      (values mat elem))))
+      (values mat seq))))
 
-(defun npivot (self-divide mat)
-  "Eliminates on pivots, according to the order of the matrix. Returns the
-modified matrix (though it may modify the argument too!) and the elementary
-matrix to perform the pivot."
+(defun pivot (self-divide mat &optional seq)
+  "Eliminates on pivots, according to the order of the matrix."
   (loop
      with n = (length mat)
-     with elem = (make-identity n)
      for row-i from 0 below n
      ;; TODO: Can we avoid nthcdr and be more consy?
      for rowcdr = (nthcdr row-i mat)
@@ -120,32 +125,23 @@ matrix to perform the pivot."
        (loop
           for lower-row in (cdr rowcdr)
           for row-k from (1+ row-i)
-          do (elemf mat elem
-               (elem+ n row-i row-k (- (/ (nth pivot-col lower-row)
-                                          (nth pivot-col row))))))
+          do (row-opf mat seq
+                      (:+ (- (/ (nth pivot-col lower-row)
+                                (nth pivot-col row)))
+                          row-i row-k)))
        (when self-divide
-         (elemf mat elem
-           (elem* n row-i (/ (nth pivot-col row)))))
-     finally (return (values mat elem))))
+         (row-opf mat seq (:* (/ (nth pivot-col row)) row-i )))
+     finally (return (values mat seq))))
 
-(defun elem-reverse (n)
-  "Returns an elementary matrix that reverses the rows of a matrix."
-  ;; And yes, this /is/ easier than multiplying a whole bunch of swap matrices
-  ;; together, thank you for asking!
-  (nreverse (make-identity n)))
+(defun mat-reverse (mat &optional seq)
+  (loop
+     for i from 0 below (length mat)
+     for k from (1- (length mat)) downto 0
+     until (>= i k)
+     do (row-opf mat seq (:swap i k)))
+  (values mat seq))
 
-(defun mat-reverse (mat)
-  (elem-reverse (length mat)))
-
-(defun pipe-elems (funs mat &optional (elem (make-identity (length mat))))
-  "funs should be a list of functions that take a matrix as an argument, then
-  returned a modified version of that matrix and the elementary matrix that
-  would do the same thing they just did. The first function in the list is
-  executed first, the opposite of function notation (more like piping)."
-  (loop for fun in funs do (elemf mat elem (funcall fun mat)))
-  (values mat elem))
-
-(defun nreduce-ef (mat)
+(defun reduce-ef (mat &optional seq)
   "Reduce the given matrix to echelon form."
   ;; Wait a second, don't we have to reorder the rows /before/ we do the pivot?
   ;; No! In fact, swapping only before the pivot won't even necessarily give us
@@ -156,14 +152,14 @@ matrix to perform the pivot."
   ;; this works well enough (although the result won't always be the same, it
   ;; will at least be in echelon form): The first row to contain a leading term
   ;; in a certain column will eliminate all the rest.
-  (pipe-elems (list (curry #'npivot nil) #'nswaparoo) mat))
+  (funcall (multiple-value-compose #'swaparoo (curry #'pivot nil)) mat seq))
 
-(defun nreduce-ref (mat)
+(defun reduce-ref (mat &optional seq)
   "Reduce the given matrix to reduced echelon form. You must use the return
 value and not re-use the argument."
-  (pipe-elems
-   (list #'nreduce-ef #'mat-reverse (curry #'npivot t) #'mat-reverse)
-   mat))
+  (funcall (multiple-value-compose
+            #'mat-reverse (curry #'pivot t) #'mat-reverse #'reduce-ef)
+           mat seq))
 
 (defun mat-augment (mat augmented-col)
   "Plops the given column onto the end of mat. A thin wrapper over
@@ -175,7 +171,7 @@ value and not re-use the argument."
   column of mat is taken to be the augmented part of an augmented matrix. Will
   return a solution where all free variables are zero. Returns nil if the system
   is inconsistent."
-  (let* ((ref (nreduce-ref mat))
+  (let* ((ref (reduce-ref mat))
          (augmented-col (lastcar (transpose ref)))
          (leaders (leading-var-pos ref)))
     ;; leading term in last col -> inconsistent
@@ -193,10 +189,28 @@ value and not re-use the argument."
   (mat* (invert (transpose new-basis)) (transpose old-basis)))
 
 ;; TODO: a different (invert) that uses determinants
+;; TODO: find out for certain whether invert depends on the order of the row
+;; operations
 (defun invert (mat)
-  (multiple-value-bind (ref elem) (nreduce-ref (copy-list mat))
+  (multiple-value-bind (ref ops) (reduce-ref (copy-list mat))
     (assert (identity-p ref))
-    (mat* elem (make-identity (length ref)))))
+    (perform-row-ops (make-identity (length ref)) ops)))
+
+;; TODO: a different (determinant) that uses the permutation expansion
+(defun determinant (mat)
+  "Returns the determinant of the matrix as calculated by row operations."
+  (assert (square-p mat))
+  (multiple-value-bind (ef ops) (reduce-ef mat)
+    (let ((det (apply #'* (loop
+                             for row in ef
+                             for i from 0
+                             collect (nth i row)))))
+      (dolist (op ops det)
+        (ecase (car op)
+          ;; swap is guaranteed not to swap a row with itself
+          (:swap (setq det (- det)))
+          (:* (setq det (/ det (second op))))
+          (:+))))))
 
 (defun leading-var-pos (mat)
   "Return a list of (i . j) pairs indicating the location of each pivot in the
@@ -219,7 +233,7 @@ given REF matrix."
   ;; (and they do) they form a basis.
   (or
    (loop
-      with ref = (nreduce-ref (copy-list mat))
+      with ref = (reduce-ref (copy-list mat))
       with width = (length (car mat))
       with tref = (transpose ref)
       with leaders = (leading-var-pos ref)
@@ -250,7 +264,7 @@ given REF matrix."
     (or
      (loop
         with leader-js = (mapcar #'cdr (leading-var-pos
-                                        (nreduce-ref (copy-list mat))))
+                                        (reduce-ref (copy-list mat))))
         for col in (transpose mat)
         for j from 0
         when (and leader-js (= j (car leader-js)))
@@ -263,7 +277,7 @@ given REF matrix."
   "Find a basis for the matrix's column space that may or may not be a subset of
   the matrix's column vectors."
   (or
-   (remove-if (curry #'every #'zerop) (nreduce-ref (transpose mat)))
+   (remove-if (curry #'every #'zerop) (reduce-ref (transpose mat)))
    (list (loop for i from 0 below (length mat) collect 0))))
 
 (setf (symbol-function 'column-space-basis) #'column-space-basis-subset)
@@ -274,11 +288,14 @@ given REF matrix."
 (defun make-identity (n)
   (loop-2d i j n n (if (= i j) 1 0)))
 
+(defun square-p (mat)
+  (= (length mat) (length (car mat))))
+
 (defun identity-p (mat)
   (equal (make-identity (length mat)) mat))
 
 (defun nonsingular-p (mat)
-  (identity-p (nreduce-ref (copy-list mat))))
+  (identity-p (reduce-ref (copy-list mat))))
 
 (defun rank (mat)
   (length (leading-var-pos (copy-list mat))))
