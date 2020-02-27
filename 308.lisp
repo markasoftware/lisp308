@@ -1,6 +1,3 @@
-;; The n- methods in this file mess with the top-level structure of the matrix
-;; passed in. (copy-list) is sufficient to protect the original matrix.
-
 (ql:quickload :alexandria)
 (use-package :alexandria)
 
@@ -192,7 +189,7 @@ value and not re-use the argument."
 ;; TODO: find out for certain whether invert depends on the order of the row
 ;; operations
 (defun invert (mat)
-  (multiple-value-bind (ref ops) (reduce-ref (copy-list mat))
+  (multiple-value-bind (ref ops) (reduce-ref mat)
     (assert (identity-p ref))
     (perform-row-ops (make-identity (length ref)) ops)))
 
@@ -233,7 +230,7 @@ given REF matrix."
   ;; (and they do) they form a basis.
   (or
    (loop
-      with ref = (reduce-ref (copy-list mat))
+      with ref = (reduce-ref mat)
       with width = (length (car mat))
       with tref = (transpose ref)
       with leaders = (leading-var-pos ref)
@@ -263,8 +260,7 @@ given REF matrix."
     space)."
     (or
      (loop
-        with leader-js = (mapcar #'cdr (leading-var-pos
-                                        (reduce-ref (copy-list mat))))
+        with leader-js = (mapcar #'cdr (leading-var-pos (reduce-ref mat)))
         for col in (transpose mat)
         for j from 0
         when (and leader-js (= j (car leader-js)))
@@ -295,10 +291,10 @@ given REF matrix."
   (equal (make-identity (length mat)) mat))
 
 (defun nonsingular-p (mat)
-  (identity-p (reduce-ref (copy-list mat))))
+  (identity-p (reduce-ref mat)))
 
 (defun rank (mat)
-  (length (leading-var-pos (copy-list mat))))
+  (length (leading-var-pos mat)))
 
 (defun nullity (mat)
   (- (length (car mat)) (rank mat)))
