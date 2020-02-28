@@ -11,6 +11,9 @@
 
 (setf (symbol-function 'transpose) #'transpose-functional)
 
+(defun repeat (val times)
+  (loop for i from 0 below times collect val))
+
 (defmacro loop-2d (i-var j-var height width &body body)
   `(loop for ,i-var from 0 below ,height
       collect (loop for ,j-var from 0 below ,width
@@ -193,7 +196,6 @@ value and not re-use the argument."
     (assert (identity-p ref))
     (perform-row-ops (make-identity (length ref)) ops)))
 
-;; TODO: a different (determinant) that uses the permutation expansion
 (defun determinant (mat)
   "Returns the determinant of the matrix as calculated by row operations."
   (assert (square-p mat))
@@ -208,6 +210,56 @@ value and not re-use the argument."
           (:swap (setq det (- det)))
           (:* (setq det (/ det (second op))))
           (:+))))))
+
+;;; All functions from here to (determinant-permutation) are utilities for it.
+
+(defun permutation-lists (n)
+  "Generate a list of all permutations of the list (0..n-1)"
+  (let ((result))
+    (map-permutations (lambda (p) (push p result)) (iota n))
+    result))
+
+(defun permutation-matrices (n)
+  "Generate all n*n permutation matrices."
+  (loop for perm in (permutation-lists n)
+     collect (loop for row in perm
+                collect (loop for j from 0 below n
+                           collect (if (= j row) 1 0)))))
+
+(defun select-by-mat (selection main)
+  "Return a list of the values in main, from top left to bottom right in
+  row-major order, where the corresponding value in the selection matrix is
+  nonzero."
+  (loop
+     for srow in selection
+     for mrow in main
+     nconc (loop
+              for sval in srow
+              for mval in mrow
+              when (not (zerop sval))
+              collect mval)))
+
+(defun permutation-mat-signum (mat)
+  "Determine whether it will take an odd or even number of swaps to reduce the
+  given permutation matrix to the identity matrix, and return -1 or 1."
+  ;; It's horribly inefficient to determine the signum after we've already
+  ;; generated the permutation matrix; we really ought to do it while generating
+  ;; the permutations.
+  (if (evenp (length (remove-if-not
+                      (compose (curry #'eq :swap) #'car)
+                      (second (multiple-value-list (reduce-ref mat))))))
+      1 -1))
+
+(defun determinant-permutation (mat)
+  "Calculate the determinant of mat using its permutation expansion. A slower
+  method than Gaussian operations (laughably so, with my implementation), but
+  you get the added bonus of messier code too!"
+  (assert (square-p mat))
+  (apply #'+ (loop
+                for perm-mat in (permutation-matrices (length mat))
+                collect (apply #'*
+                               (permutation-mat-signum perm-mat)
+                               (select-by-mat perm-mat mat)))))
 
 (defun leading-var-pos (mat)
   "Return a list of (i . j) pairs indicating the location of each pivot in the
@@ -235,7 +287,7 @@ given REF matrix."
       with tref = (transpose ref)
       with leaders = (leading-var-pos ref)
       with free-js = (nset-difference
-                    (loop for i from 0 below width collect i)
+                    (iota width)
                     (mapcar #'cdr leaders))
       for free-j in free-js
       for free-col = (nth free-j tref)
@@ -249,7 +301,7 @@ given REF matrix."
                            (t 0)))) ; it is a free column
    ;; When there are no free variables, we give the basis for the trivial
    ;; subspace of the domain
-   (list (loop for i from 0 below (length (car mat)) collect 0))))
+   (list (repeat 0 (length (car mat))))))
 
 (setf (symbol-function 'kernel-basis) #'nullspace-basis)
 
@@ -267,14 +319,14 @@ given REF matrix."
         collect (progn
                   (setq leader-js (cdr leader-js))
                   col))
-     (list (loop for i from 0 below (length mat) collect 0))))
+     (list (repeat 0 (length mat)))))
 
 (defun column-space-basis-row-method (mat)
   "Find a basis for the matrix's column space that may or may not be a subset of
   the matrix's column vectors."
   (or
    (remove-if (curry #'every #'zerop) (reduce-ref (transpose mat)))
-   (list (loop for i from 0 below (length mat) collect 0))))
+   (list (repeat 0 (length mat)))))
 
 (setf (symbol-function 'column-space-basis) #'column-space-basis-subset)
 
