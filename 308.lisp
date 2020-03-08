@@ -17,7 +17,7 @@
 (defmacro loop-2d (i-var j-var height width &body body)
   `(loop for ,i-var from 0 below ,height
       collect (loop for ,j-var from 0 below ,width
-                   collect (progn ,@body))))
+                 collect (progn ,@body))))
 
 (defun perform-row-op (mat op)
   (ecase (car op)
@@ -335,8 +335,8 @@ given REF matrix."
       with tref = (transpose ref)
       with leaders = (leading-var-pos ref)
       with free-js = (nset-difference
-                    (iota width)
-                    (mapcar #'cdr leaders))
+                      (iota width)
+                      (mapcar #'cdr leaders))
       for free-j in free-js
       for free-col = (nth free-j tref)
       collect (loop
@@ -354,20 +354,20 @@ given REF matrix."
 (setf (symbol-function 'kernel-basis) #'nullspace-basis)
 
 (defun column-space-basis-subset (mat)
-    "Find a basis for the matrix's column space that is a subset of that
+  "Find a basis for the matrix's column space that is a subset of that
     matrix's column vectors. Returns a list of those vectors (i.e, if the return
     value is treated as a matrix, its row space is the argument's column
     space)."
-    (or
-     (loop
-        with leader-js = (mapcar #'cdr (leading-var-pos (reduce-ref mat)))
-        for col in (transpose mat)
-        for j from 0
-        when (and leader-js (= j (car leader-js)))
-        collect (progn
-                  (setq leader-js (cdr leader-js))
-                  col))
-     (list (repeat 0 (length mat)))))
+  (or
+   (loop
+      with leader-js = (mapcar #'cdr (leading-var-pos (reduce-ref mat)))
+      for col in (transpose mat)
+      for j from 0
+      when (and leader-js (= j (car leader-js)))
+      collect (progn
+                (setq leader-js (cdr leader-js))
+                col))
+   (list (repeat 0 (length mat)))))
 
 (defun column-space-basis-row-method (mat)
   "Find a basis for the matrix's column space that may or may not be a subset of
@@ -442,10 +442,38 @@ given REF matrix."
     (polynomial-canonicalize
      (reduce #'polynomial-binary* (cons p1 prest)))))
 
+;; I originally wrote this by passing the addition and multiplication functions
+;; to (determinant-permutation) instead of copy-pasting the
+;; (determinant-permutation) code here. But then the problem became that signum
+;; returns an integer, not a degree-zero polynomial. Since I have no intention
+;; of expanding this project to work on arbitrary fields and vector spaces, I
+;; opted to copy-paste instead.
+(defun characteristic-polynomial (mat)
+  (assert (square-p mat))
+  (let ((mat (loop for row in mat
+                for i from 0
+                collect (loop for val in row
+                           for j from 0
+                           collect (if (= i j) (list val -1) (list val))))))
+    (apply #'polynomial+ (loop
+                            for perm-mat in (permutation-matrices (length mat))
+                            collect (apply #'polynomial*
+                                           (list (permutation-mat-signum perm-mat))
+                                           (select-by-mat perm-mat mat))))))
+
 (defun eigenvalue-p (mat r)
   "Determine if r is an eigenvalue of mat."
   (assert (square-p mat))
   (not (nonsingular-p (mat+ mat (mat-scalar* (make-identity (length mat)) (- r))))))
+
+(defun eigenspace-basis (mat r)
+  (assert (square-p mat))
+  (nullspace-basis (mat+ mat (mat-scalar* (make-identity (length mat)) (- r)))))
+
+(defun integer-eigenvalues (mat &optional (start -1000) (end 1000))
+  "Find integral eigenvalues for the given matrix by trial and error. Will
+  attempt all integers between start and end."
+  (remove-if-not (curry #'eigenvalue-p mat) (iota (- end start) :start start)))
 
 (defun make-identity (n)
   (loop-2d i j n n (if (= i j) 1 0)))
