@@ -195,13 +195,20 @@ value and not re-use the argument."
 (defun make-change-of-basis-mat (old-basis new-basis)
   (mat* (invert (transpose new-basis)) (transpose old-basis)))
 
-;; TODO: a different (invert) that uses determinants
-;; TODO: find out for certain whether invert depends on the order of the row
-;; operations
 (defun invert (mat)
   (multiple-value-bind (ref ops) (reduce-ref mat)
     (assert (identity-p ref))
-    (perform-row-ops (make-identity (length ref)) ops)))
+    ;; Interestingly, this still worked without the (reverse) for a while -- it
+    ;; only sometimes fails using the wrong order of row operations.
+    (perform-row-ops (make-identity (length ref)) (reverse ops))))
+
+(defun invert-cofactors (mat)
+  "Another method for computing the inverse."
+  ;; Although it is another method, it's sorta dumb because our default
+  ;; determinant implementation does the same row operations a normal inversion
+  ;; would. If you truly want to do it in a different way, you'd have to use
+  ;; determinant-cofactors here instead. TODO: that
+  (mat-scalar* (transpose (cofactor-mat mat)) (/ (determinant mat))))
 
 (defun determinant (mat)
   "Returns the determinant of the matrix as calculated by row operations."
@@ -267,6 +274,40 @@ value and not re-use the argument."
                 collect (apply #'*
                                (permutation-mat-signum perm-mat)
                                (select-by-mat perm-mat mat)))))
+
+(defun minor (mat i j)
+  "Return mat with row i and column j removed."
+  (assert (< i (length mat)))
+  (assert (< j (length (car mat))))
+  (loop
+     for row in mat
+     for ic from 0
+     unless (= i ic)
+     collect (loop
+                for col in row
+                for jc from 0
+                unless (= j jc)
+                collect col)))
+
+(defun cofactor (mat i j)
+  (determinant (minor mat i j)))
+
+(defun cofactor-mat (mat)
+  (loop-2d i j (length mat) (length (car mat))
+       (* (expt -1 (+ i j)) (cofactor mat i j))))
+
+;; TODO: fix
+;; (defun determinant-cofactor (mat &optional (expand-on 0) expand-on-col)
+;;   "Find the determinant of the matrix using the Lagrange/cofactor expansion. By
+;;   default, expands on the first row; use expand-on to specify a row to expand
+;;   on, and set expand-on-col to non-nil to expand on that column instead of that
+;;   row."
+;;   (assert (square-p mat))
+;;   (let* ((mat (if expand-on-col (transpose mat) mat))
+;;          (row (nth expand-on mat)))
+;;     (apply #'+ (loop
+;;                   for j from 0 below (length mat)
+;;                   collect (* (nth j row) (cofactor mat expand-on j))))))
 
 (defun leading-var-pos (mat)
   "Return a list of (i . j) pairs indicating the location of each pivot in the
