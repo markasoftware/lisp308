@@ -491,11 +491,11 @@ given REF matrix."
 
 (defun eigenvalues-roots (mat)
   (assert (square-p mat))
-  (assert (<= (length mat) 3))
+  (assert (<= (length mat) 2))
   (polynomial-roots (characteristic-polynomial mat)))
 
 (defun eigenvalues-reasonable (mat)
-  (if (<= (length mat) 3)
+  (if (<= (length mat) 2)
       (eigenvalues-roots mat)
       (eigenvalues-integers mat)))
 

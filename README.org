@@ -1,0 +1,178 @@
+* lisp308
+  A collection of matrix utility functions.
+
+  I wrote most of this while taking Math 308, Linear Algebra, at the University
+  of Washington. Programming isn't required by the course, but it's good fun!
+* Features & Examples
+** Echelon Form Reduction
+   Can reduce matrices to echelon or reduced echelon form, and records the
+   operations taken to get there.
+   
+   #+BEGIN_SRC lisp
+     (reduce-ef '((1 2 3)
+                  (4 5 6)
+                  (7 8 9)))
+   #+END_SRC
+
+   | 1 |  2 |  3 |
+   | 0 | -3 | -6 |
+   | 0 |  0 |  0 |
+
+   #+BEGIN_SRC lisp :results org
+     (reduce-ref '((1 2 3)
+                   (4 5 6)
+                   (7 8 9)))
+   #+END_SRC
+
+   | 1 | 0 | -1 |
+   | 0 | 1 |  2 |
+   | 0 | 0 |  0 |
+   
+   The raw return values, including row operations (in reverse order):
+
+   #+BEGIN_SRC lisp
+   ((1 0 -1) (0 1 2) (0 0 0))
+   ((:SWAP 0 2) (:* 1 2) (:* -1/3 1) (:+ 2/3 1 2) (:SWAP 0 2) (:+ -2 1 2)
+    (:+ -7 0 2) (:+ -4 0 1))
+   #+END_SRC
+   
+   So, for example, the first row operation performed was to subtract 4 of row 0
+   from row 1, as represented by ~(:+ -4 0 1)~. These operations can be used to
+   easily calculate determinants, inverses, etc.
+** Matrix algebra
+   #+BEGIN_SRC lisp
+     (setq a '((1 2 3)
+               (4 5 6)
+               (7 8 9)))
+     (setq b '((2 0 0)
+               (0 2 0)
+               (0 0 2)))
+     (mat* b a)
+   #+END_SRC
+
+   |  2 |  4 |  6 |
+   |  8 | 10 | 12 |
+   | 14 | 16 | 18 |
+   
+   Equivalently:
+
+   #+BEGIN_SRC lisp
+     (mat* '((1 2 3)
+             (4 5 6)
+             (7 8 9))
+           (mat-scalar* (make-identity 3) 2))
+   #+END_SRC
+   
+   We may also invert:
+   
+   #+BEGIN_SRC lisp
+     (invert '((1 2 3)
+               (4 5 6)
+               (9 2 7)))
+   #+END_SRC
+
+   | -23/36 | 2/9  | 1/12 |
+   | -13/18 | 5/9  | -1/6 |
+   | 37/36  | -4/9 | 1/12 |
+   
+   The default invert implementation uses row operations, but there is another
+   one included that uses cofactors and determinant.
+   
+   Other matrix algebra utilities include:
+   + ~(mat+)~ :: Addition
+   + ~(mat-expt)~ :: Exponentiation
+   + ~(transpose)~ :: Exchange rows with columns
+** Spaces
+   #+BEGIN_SRC lisp :results org
+     (column-space-basis '((1 2 3)
+                           (4 5 6)
+                           (7 8 9)))
+   #+END_SRC
+
+   #+BEGIN_SRC lisp
+   ((1 4 7) (2 5 8))
+   #+END_SRC
+   
+   Here it properly detects that the third column can be represented by the
+   first two.
+   
+   #+BEGIN_SRC lisp :results org
+     (nullspace-basis '((1 2 3)
+                        (4 5 6)
+                        (7 8 9)))
+   #+END_SRC
+
+   #+BEGIN_SRC lisp
+   ((1 -2 1))
+   #+END_SRC
+   
+   This is the correct one-dimensional nullspace.
+** Determinants
+   #+BEGIN_SRC lisp
+   (determinant (make-identity 3))
+   #+END_SRC
+
+   : 1
+   
+   #+BEGIN_SRC lisp
+   (determinant (mat-scalar* (make-identity 3) 5))
+   #+END_SRC
+
+   : 125
+   
+   #+BEGIN_SRC lisp
+     (determinant '((1 2 3)
+                    (4 5 6)
+                    (7 8 9)))
+   #+END_SRC
+
+   : 0
+   
+   The default determinant implementation uses row operations. Alternate
+   implementations are provided that calculate the determinant using the
+   permutation expansion (generate all permutation matrices, multiply
+   corresponding values from original matrix, then sum) and the Laplace cofactor
+   expansion.
+** Eigen{values,vectors}
+   #+BEGIN_SRC lisp
+     (eigenvalues '((1 2 3)
+                    (4 5 6)
+                    (7 8 9)))
+   #+END_SRC
+
+   | 0 |
+   
+   #+BEGIN_SRC lisp
+   (eigenvalues '((0 1)
+                  (1 1)))
+   #+END_SRC
+
+   | 1.618034 | -0.618034 |
+   
+   #+BEGIN_SRC lisp :results org
+     (eigenspace-basis '((0 1)
+                         (1 1))
+                       1.618034)
+   #+END_SRC
+
+   #+BEGIN_SRC lisp
+   ((0.618034 1))
+   #+END_SRC
+   
+   In this case the eigenspace was one-dimensional.
+   
+   #+BEGIN_SRC lisp :results org
+   (diagonalize '((0 1)
+                  (1 1)))
+   #+END_SRC
+
+   #+BEGIN_SRC lisp
+   ((1.618034 0)
+    (0       -0.618034))
+
+   ((0.618034 -1.618034)
+    (1         1))
+   #+END_SRC
+   
+   The two matrices are D and P respectively, where PDP^(-1) = the original
+   matrix.
