@@ -70,10 +70,13 @@
 
 (defun mat-expt (mat r)
   (assert (square-p mat))
-  (case r
-    (0 (make-identity (length mat)))
-    (1 mat)
-    (otherwise (mat* (mat-expt mat (floor r 2)) (mat-expt mat (ceiling r 2))))))
+  (if (diagonal-p mat)
+      (mapcar (curry #'mapcar (lambda (b) (expt b r))) mat)
+      (case r
+        (0 (make-identity (length mat)))
+        (1 mat)
+        (otherwise (mat* (mat-expt mat (floor r 2))
+                         (mat-expt mat (ceiling r 2)))))))
 
 (defun mat-vec* (mat vec)
   "Take the row vector vec, convert to a column vector and multiply by mat, then
@@ -315,7 +318,8 @@ given REF matrix."
   (loop
      for row in mat
      for i from 0
-     for j = (position 1 row)
+     ;; This used to be (position 1 row) but that doesn't work for 1.0
+     for j = (position-if (compose #'not #'zerop) row)
      when j
      collect (cons i j)))
 
@@ -442,6 +446,16 @@ given REF matrix."
     (polynomial-canonicalize
      (reduce #'polynomial-binary* (cons p1 prest)))))
 
+(defun polynomial-roots (p)
+  "Solve polynomials of up to degree 2 with the quadratic formula."
+  (destructuring-bind (&optional c b a) p
+    (case (length p)
+      (1 (list c))
+      (2 (list (/ (- c) b)))
+      (3 (list
+          (/ (+ (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a))
+          (/ (- (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a)))))))
+
 ;; I originally wrote this by passing the addition and multiplication functions
 ;; to (determinant-permutation) instead of copy-pasting the
 ;; (determinant-permutation) code here. But then the problem became that signum
@@ -470,10 +484,58 @@ given REF matrix."
   (assert (square-p mat))
   (nullspace-basis (mat+ mat (mat-scalar* (make-identity (length mat)) (- r)))))
 
-(defun integer-eigenvalues (mat &optional (start -1000) (end 1000))
+(defun eigenvalues-integers (mat &optional (start -1000) (end 1000))
   "Find integral eigenvalues for the given matrix by trial and error. Will
   attempt all integers between start and end."
   (remove-if-not (curry #'eigenvalue-p mat) (iota (- end start) :start start)))
+
+(defun eigenvalues-roots (mat)
+  (assert (square-p mat))
+  (assert (<= (length mat) 3))
+  (polynomial-roots (characteristic-polynomial mat)))
+
+(defun eigenvalues-reasonable (mat)
+  (if (<= (length mat) 3)
+      (eigenvalues-roots mat)
+      (eigenvalues-integers mat)))
+
+(defvar *eigenvalue-function* #'eigenvalues-reasonable
+  "The function to call to find the eigenvalues of a matrix. You should
+  dynamically bind this if the default implementation doesn't find your
+  eigenvalues.")
+
+;; So we don't have to write funcall everywhere
+(defun eigenvalues (mat)
+  (funcall *eigenvalue-function* mat))
+
+(defun diagonalize (mat)
+  "Diagonalize the given matrix. Returns nil if not diagonalizable. Returns
+  values D and P where P*D*P^(-1)=mat. You may want to dynamically bind
+  *eigenvalue-function* if the default does no find all the eigenvalues for
+  your matrix."
+  (assert (square-p mat))
+  (let*  ((n (length mat))
+          (result
+           (loop
+              for evalue in (eigenvalues mat)
+              nconc (loop
+                       for evec in (eigenspace-basis mat evalue)
+                       collect (cons evalue evec))))
+          (result-d result)) ; just for iteration
+    (when (= (length result) n) ; nil is a valid multiple-value
+      (values
+       (loop-2d i j n n
+            (if (= i j)
+                (prog1
+                    (caar result-d)
+                  (setf result-d (cdr result-d)))
+                0))
+       (transpose (mapcar #'cdr result))))))
+
+(defun mat-diagonalize-expt (mat r)
+  (multiple-value-bind (d p) (diagonalize mat)
+    (assert d) ; make sure it is diagonalizable
+    (mat* p (mat* (mat-expt d r) (invert p)))))
 
 (defun make-identity (n)
   (loop-2d i j n n (if (= i j) 1 0)))
@@ -482,10 +544,22 @@ given REF matrix."
   (= (length mat) (length (car mat))))
 
 (defun identity-p (mat)
-  (equal (make-identity (length mat)) mat))
+  (equalp (make-identity (length mat)) mat))
 
 (defun nonsingular-p (mat)
   (identity-p (reduce-ref mat)))
+
+(defun diagonal-p (mat)
+  (and
+   (square-p mat)
+   (not (loop
+           for row in mat
+           for i from 0
+           when (loop for val in row
+                   for j from 0
+                   unless (or (= i j) (zerop val))
+                   do (return t))
+           do (return t)))))
 
 (defun rank (mat)
   (length (leading-var-pos mat)))
@@ -496,5 +570,11 @@ given REF matrix."
 ;;;; APPLICATIONS
 
 ;; TODO: rewrite using diagonalization and fast exponentiation
-(defun fibonacci (n)
+(defun fibonacci-lame (n)
   (car (mat-vec* (mat-expt '((0 1) (1 1)) n) '(0 1))))
+
+(defun fibonacci-cool (n)
+  "Warning: returns the wrong values for large n due to rounding errors."
+  (values (round (car (mat-vec*
+                       (mat-diagonalize-expt '((0 1) (1 1)) n)
+                       '(0 1))))))
