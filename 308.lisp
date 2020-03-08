@@ -68,6 +68,13 @@
                    collect (* (nth j (nth i a))
                               (nth j (nth k b-t))))))))
 
+(defun mat-expt (mat r)
+  (assert (square-p mat))
+  (case r
+    (0 (make-identity (length mat)))
+    (1 mat)
+    (otherwise (mat* (mat-expt mat (floor r 2)) (mat-expt mat (ceiling r 2))))))
+
 (defun mat-vec* (mat vec)
   "Take the row vector vec, convert to a column vector and multiply by mat, then
    convert back to a row vector."
