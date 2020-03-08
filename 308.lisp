@@ -464,3 +464,9 @@ given REF matrix."
 
 (defun nullity (mat)
   (- (length (car mat)) (rank mat)))
+
+;;;; APPLICATIONS
+
+;; TODO: rewrite using diagonalization and fast exponentiation
+(defun fibonacci (n)
+  (car (mat-vec* (mat-expt '((0 1) (1 1)) n) '(0 1))))
