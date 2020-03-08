@@ -381,6 +381,72 @@ given REF matrix."
 (defun row-space-basis (mat)
   (column-space-basis (transpose mat)))
 
+;;;; EIGENVALUES
+
+;; Code for finding the roots of arbitrary polynomials is beyond the scope of
+;; this project, so instead we provide a method of generating the characteristic
+;; polynomial without finding its roots and use closed-form root-finding
+;; equations on small matrices, the only ones supported.
+
+;; A polynomial is just a list, where the first element is the coefficient of
+;; x^0, second is coefficient of x^1, etc.
+(defun polynomial-canonicalize (p)
+  "Remove trailing zero-coefficient terms."
+  (do ((pr (reverse p) (cdr pr)))
+      ((or (null pr) (not (zerop (car pr)))) (reverse pr))))
+
+(defun polynomial+ (p1 &rest prest)
+  (polynomial-canonicalize
+   (loop
+      for ps = (cons p1 prest) then (mapcar #'cdr ps)
+      for power from 0
+      while (some #'identity ps)
+      collect (apply #'+ (substitute 0 nil (mapcar #'car ps))))))
+
+(defun polynomial* (p1 &rest prest)
+  ;; this is my new favorite name for local recursive functions
+  (polynomial-canonicalize
+   (labels ((%%% (power-left ps)
+              (cond
+                (ps (apply #'+
+                           (loop
+                              for i from 0 to power-left
+                              for p in (car ps)
+                              collect (* p (%%% (- power-left i) (cdr ps))))))
+                ((= power-left 0) 1)
+                (t 0))))
+     (loop
+        with ps = (cons p1 prest)
+        for i from 0 to (apply #'+ (mapcar (compose #'1- #'length) ps))
+        collect (%%% i ps)))))
+
+;; I can't decide if I like this one or the recursive one more, so I wrote both!
+(defun polynomial-non-recursive* (p1 &rest prest)
+  (flet ((polynomial-binary* (p1 p2)
+           (loop
+              with degree = (+ -2 (length p1) (length p2))
+              with p1-pad = (loop for i from 0 to degree
+                               for p = p1 then (cdr p)
+                               collect (or (car p) 0))
+              with p2-pad-reverse = (reverse (loop for i from 0 to degree
+                                                for p = p2 then (cdr p)
+                                                collect (or (car p) 0)))
+              for power from 0 to degree
+              collect
+                (loop
+                   with total = 0
+                   for val-1 in p1-pad
+                   for val-2 in (nthcdr (- degree power) p2-pad-reverse)
+                   do (incf total (* val-1 val-2))
+                   finally (return total)))))
+    (polynomial-canonicalize
+     (reduce #'polynomial-binary* (cons p1 prest)))))
+
+(defun eigenvalue-p (mat r)
+  "Determine if r is an eigenvalue of mat."
+  (assert (square-p mat))
+  (not (nonsingular-p (mat+ mat (mat-scalar* (make-identity (length mat)) (- r))))))
+
 (defun make-identity (n)
   (loop-2d i j n n (if (= i j) 1 0)))
 
