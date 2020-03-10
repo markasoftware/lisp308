@@ -1,6 +1,38 @@
 (ql:quickload :alexandria)
 (use-package :alexandria)
 
+(defmacro define-unary-op (fun var default doc)
+  (with-gensyms (x)
+    `(progn
+       (defvar ,var ,default ,doc)
+       (defun ,fun (,x)
+         ,doc
+         (funcall ,var ,x)))))
+(defmacro define-binary-op (fun var default doc)
+  (with-gensyms (x xs)
+    `(progn
+       (defvar ,var ,default ,doc)
+       (defun ,fun (,x &rest ,xs)
+         ,doc
+         (reduce ,var (cons ,x ,xs))))))
+
+(defvar *numerical-field* t "Non-nil when normal CL numerical operators will
+work on the members of the field. Simply used to signal errors in functions that
+rely on these operators (eg, finding eigenvalues).")
+
+;; scalars
+(define-binary-op s+ *scalar-adder* #'+ "Add two scalars")
+(define-binary-op s* *scalar-multiplier* #'* "Multiply two scalars")
+(define-unary-op s- *scalar-additive-inverter* #'- "Negate a scalar")
+(define-unary-op s/ *scalar-multiplicative-inverter* #'/ "Invert a scalar")
+(define-binary-op s= *scalar-equality* #'= "Compare scalars")
+(defvar *s0* 0 "Scalar additive identity")
+(defvar *s1* 1 "Scalar multiplicative identity")
+(defun s-zerop (r) (s= *s0* r))
+
+;; NOTE: we don't need equivalent vector functions because all vector spaces are
+;; isomorphic to F^n, so we don't actually deal with vectors anywhere
+
 (defun transpose-functional (mat &optional so-far)
   "Adds the first column of mat to so-far. It's a lot simpler than I thought!"
   (if (null (car mat))
@@ -39,7 +71,7 @@
                     (loop
                        for v2 in row
                        for v1 in (nth (third op) mat)
-                       collect (+ (* (second op) v1) v2))
+                       collect (s+ (s* (second op) v1) v2))
                     row)))
 
     (:*                                 ; (:* r i)
@@ -63,9 +95,9 @@
          (n (length (car b))))
     (assert (= p (length (car a))))
     (loop-2d i k m n
-         (apply #'+
+         (apply #'s+
                 (loop for j from 0 below p
-                   collect (* (nth j (nth i a))
+                   collect (s* (nth j (nth i a))
                               (nth j (nth k b-t))))))))
 
 (defun mat-expt (mat r)
@@ -75,6 +107,7 @@
       (case r
         (0 (make-identity (length mat)))
         (1 mat)
+        ;; r is always an integer, not a field member
         (otherwise (mat* (mat-expt mat (floor r 2))
                          (mat-expt mat (ceiling r 2)))))))
 
@@ -88,11 +121,11 @@
       (let ((b (apply #'mat+ bs)))
         (assert (= (length a) (length b)))
         (assert (= (length (car a)) (length (car b))))
-        (mapcar (lambda (aa bb) (mapcar #'+ aa bb)) a b))
+        (mapcar (lambda (aa bb) (mapcar #'s+ aa bb)) a b))
       a))
 
 (defun mat-scalar* (mat r &rest rs)
-  (mapcar (curry #'mapcar (apply #'curry #'* r rs)) mat))
+  (mapcar (curry #'mapcar (apply #'curry #'s* r rs)) mat))
 
 (defun mat-append-cols (mat &rest mats)
   "Append mats to mat, column-wise. I.e, if mat1 is 3x3 and mat2 is 3x3, output
@@ -111,7 +144,7 @@
   (let ((n (length mat)))
 
     (flet ((key (row)
-             (or (position-if-not #'zerop row)
+             (or (position-if-not #'s-zerop row)
                  (length row))))
 
       (dotimes (i n)
@@ -129,18 +162,18 @@
      ;; TODO: Can we avoid nthcdr and be more consy?
      for rowcdr = (nthcdr row-i mat)
      for row = (car rowcdr)
-     for pivot-col = (position-if-not #'zerop row)
+     for pivot-col = (position-if-not #'s-zerop row)
      when pivot-col
      do
        (loop
           for lower-row in (cdr rowcdr)
           for row-k from (1+ row-i)
           do (row-opf mat seq
-                      (:+ (- (/ (nth pivot-col lower-row)
-                                (nth pivot-col row)))
+                      (:+ (s- (s* (nth pivot-col lower-row)
+                                  (s/ (nth pivot-col row))))
                           row-i row-k)))
        (when self-divide
-         (row-opf mat seq (:* (/ (nth pivot-col row)) row-i )))
+         (row-opf mat seq (:* (s/ (nth pivot-col row)) row-i)))
      finally (return (values mat seq))))
 
 (defun mat-reverse (mat &optional seq)
@@ -177,7 +210,7 @@ value and not re-use the argument."
   (mat-append-cols mat (transpose (list augmented-col))))
 
 (defun solve (mat)
-  "Return a solution to the system of equations represented by mat. The last
+  "Propose a solution to the system of equations represented by mat. The last
   column of mat is taken to be the augmented part of an augmented matrix. Will
   return a solution where all free variables are zero. Returns nil if the system
   is inconsistent."
@@ -211,21 +244,21 @@ value and not re-use the argument."
   ;; determinant implementation does the same row operations a normal inversion
   ;; would. If you truly want to do it in a different way, you'd have to use
   ;; determinant-cofactors here instead. TODO: that
-  (mat-scalar* (transpose (cofactor-mat mat)) (/ (determinant mat))))
+  (mat-scalar* (transpose (cofactor-mat mat)) (s/ (determinant mat))))
 
 (defun determinant (mat)
   "Returns the determinant of the matrix as calculated by row operations."
   (assert (square-p mat))
   (multiple-value-bind (ef ops) (reduce-ef mat)
-    (let ((det (apply #'* (loop
-                             for row in ef
-                             for i from 0
-                             collect (nth i row)))))
+    (let ((det (apply #'s* (loop
+                              for row in ef
+                              for i from 0
+                              collect (nth i row)))))
       (dolist (op ops det)
         (ecase (car op)
           ;; swap is guaranteed not to swap a row with itself
-          (:swap (setq det (- det)))
-          (:* (setq det (/ det (second op))))
+          (:swap (setq det (s- det)))
+          (:* (setq det (s* det (s/ (second op)))))
           (:+))))))
 
 ;;; All functions from here to (determinant-permutation) are utilities for it.
@@ -241,7 +274,7 @@ value and not re-use the argument."
   (loop for perm in (permutation-lists n)
      collect (loop for row in perm
                 collect (loop for j from 0 below n
-                           collect (if (= j row) 1 0)))))
+                           collect (if (= j row) *s1* *s0*)))))
 
 (defun select-by-mat (selection main)
   "Return a list of the values in main, from top left to bottom right in
@@ -253,7 +286,7 @@ value and not re-use the argument."
      nconc (loop
               for sval in srow
               for mval in mrow
-              when (not (zerop sval))
+              when (not (s-zerop sval))
               collect mval)))
 
 (defun permutation-mat-signum (mat)
@@ -265,18 +298,18 @@ value and not re-use the argument."
   (if (evenp (length (remove-if-not
                       (compose (curry #'eq :swap) #'car)
                       (second (multiple-value-list (reduce-ref mat))))))
-      1 -1))
+      *s1* (s- *s1*)))
 
 (defun determinant-permutation (mat)
   "Calculate the determinant of mat using its permutation expansion. A slower
   method than Gaussian operations (laughably so, with my implementation), but
   you get the added bonus of messier code too!"
   (assert (square-p mat))
-  (apply #'+ (loop
-                for perm-mat in (permutation-matrices (length mat))
-                collect (apply #'*
-                               (permutation-mat-signum perm-mat)
-                               (select-by-mat perm-mat mat)))))
+  (apply #'s+ (loop
+                 for perm-mat in (permutation-matrices (length mat))
+                 collect (apply #'s*
+                                (permutation-mat-signum perm-mat)
+                                (select-by-mat perm-mat mat)))))
 
 (defun minor (mat i j)
   "Return mat with row i and column j removed."
@@ -297,7 +330,11 @@ value and not re-use the argument."
 
 (defun cofactor-mat (mat)
   (loop-2d i j (length mat) (length (car mat))
-       (* (expt -1 (+ i j)) (cofactor mat i j))))
+       ;; TODO: verify that it's correct to alternate between 1 and -1, rather
+       ;; than exponentiating -1, in arbitrary fields.
+       (if (evenp (+ i j))
+           (cofactor mat i j)
+           (s- (cofactor mat i j)))))
 
 ;; TODO: fix
 ;; (defun determinant-cofactor (mat &optional (expand-on 0) expand-on-col)
@@ -319,7 +356,7 @@ given REF matrix."
      for row in mat
      for i from 0
      ;; This used to be (position 1 row) but that doesn't work for 1.0
-     for j = (position-if (compose #'not #'zerop) row)
+     for j = (position-if-not #'s-zerop row)
      when j
      collect (cons i j)))
 
@@ -348,12 +385,12 @@ given REF matrix."
                  for leader-cons =
                    (find-if (compose (curry #'eq result-j) #'cdr) leaders)
                  collect (cond
-                           ((= result-j free-j) 1)
-                           (leader-cons (- (nth (car leader-cons) free-col)))
-                           (t 0)))) ; it is a free column
+                           ((= result-j free-j) *s1*)
+                           (leader-cons (s- (nth (car leader-cons) free-col)))
+                           (t *s0*)))) ; it is a free column
    ;; When there are no free variables, we give the basis for the trivial
    ;; subspace of the domain
-   (list (repeat 0 (length (car mat))))))
+   (list (repeat *s0* (length (car mat))))))
 
 (setf (symbol-function 'kernel-basis) #'nullspace-basis)
 
@@ -371,14 +408,14 @@ given REF matrix."
       collect (progn
                 (setq leader-js (cdr leader-js))
                 col))
-   (list (repeat 0 (length mat)))))
+   (list (repeat *s0* (length mat)))))
 
 (defun column-space-basis-row-method (mat)
   "Find a basis for the matrix's column space that may or may not be a subset of
   the matrix's column vectors."
   (or
-   (remove-if (curry #'every #'zerop) (reduce-ref (transpose mat)))
-   (list (repeat 0 (length mat)))))
+   (remove-if (curry #'every #'s-zerop) (reduce-ref (transpose mat)))
+   (list (repeat *s0* (length mat)))))
 
 (setf (symbol-function 'column-space-basis) #'column-space-basis-subset)
 
@@ -397,7 +434,7 @@ given REF matrix."
 (defun polynomial-canonicalize (p)
   "Remove trailing zero-coefficient terms."
   (do ((pr (reverse p) (cdr pr)))
-      ((or (null pr) (not (zerop (car pr)))) (reverse pr))))
+      ((or (null pr) (not (s-zerop (car pr)))) (reverse pr))))
 
 (defun polynomial+ (p1 &rest prest)
   (polynomial-canonicalize
@@ -405,20 +442,20 @@ given REF matrix."
       for ps = (cons p1 prest) then (mapcar #'cdr ps)
       for power from 0
       while (some #'identity ps)
-      collect (apply #'+ (substitute 0 nil (mapcar #'car ps))))))
+      collect (apply #'s+ (substitute *s0* nil (mapcar #'car ps))))))
 
 (defun polynomial* (p1 &rest prest)
   ;; this is my new favorite name for local recursive functions
   (polynomial-canonicalize
    (labels ((%%% (power-left ps)
               (cond
-                (ps (apply #'+
+                (ps (apply #'s+
                            (loop
                               for i from 0 to power-left
                               for p in (car ps)
-                              collect (* p (%%% (- power-left i) (cdr ps))))))
-                ((= power-left 0) 1)
-                (t 0))))
+                              collect (s* p (%%% (- power-left i) (cdr ps))))))
+                ((= power-left 0) *s1*)
+                (t *s0*))))
      (loop
         with ps = (cons p1 prest)
         for i from 0 to (apply #'+ (mapcar (compose #'1- #'length) ps))
@@ -431,23 +468,24 @@ given REF matrix."
               with degree = (+ -2 (length p1) (length p2))
               with p1-pad = (loop for i from 0 to degree
                                for p = p1 then (cdr p)
-                               collect (or (car p) 0))
+                               collect (or (car p) *s0*))
               with p2-pad-reverse = (reverse (loop for i from 0 to degree
                                                 for p = p2 then (cdr p)
-                                                collect (or (car p) 0)))
+                                                collect (or (car p) *s0*)))
               for power from 0 to degree
               collect
                 (loop
-                   with total = 0
+                   with total = *s0*
                    for val-1 in p1-pad
                    for val-2 in (nthcdr (- degree power) p2-pad-reverse)
-                   do (incf total (* val-1 val-2))
+                   do (setf total (s+ total (s* val-1 val-2)))
                    finally (return total)))))
     (polynomial-canonicalize
      (reduce #'polynomial-binary* (cons p1 prest)))))
 
 (defun polynomial-roots (p)
   "Solve polynomials of up to degree 2 with the quadratic formula."
+  (assert *numerical-field*)
   (destructuring-bind (&optional c b a) p
     (case (length p)
       (1 (list c))
@@ -456,12 +494,16 @@ given REF matrix."
           (/ (+ (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a))
           (/ (- (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a)))))))
 
-;; I originally wrote this by passing the addition and multiplication functions
-;; to (determinant-permutation) instead of copy-pasting the
-;; (determinant-permutation) code here. But then the problem became that signum
-;; returns an integer, not a degree-zero polynomial. Since I have no intention
-;; of expanding this project to work on arbitrary fields and vector spaces, I
-;; opted to copy-paste instead.
+(defun characteristic-polynomial (mat)
+  (let ((*numerical-field* nil)
+        (*scalar-adder* #'polynomial+)
+        (*scalar-multiplier* #'polynomial*)
+        (*scalar-additive-inverter* (curry #'polynomial* (list (s- *s1*))))
+        (*scalar-equality* #'equalp)
+        (*s0* (list *s0*))
+        (*s1* (list *s1*)))
+    (determinant mat)))
+
 (defun characteristic-polynomial (mat)
   (assert (square-p mat))
   (let ((mat (loop for row in mat
@@ -529,7 +571,7 @@ given REF matrix."
                 (prog1
                     (caar result-d)
                   (setf result-d (cdr result-d)))
-                0))
+                *s0*))
        (transpose (mapcar #'cdr result))))))
 
 (defun mat-diagonalize-expt (mat r)
@@ -538,7 +580,7 @@ given REF matrix."
     (mat* p (mat* (mat-expt d r) (invert p)))))
 
 (defun make-identity (n)
-  (loop-2d i j n n (if (= i j) 1 0)))
+  (loop-2d i j n n (if (= i j) *s1* *s0*)))
 
 (defun square-p (mat)
   (= (length mat) (length (car mat))))
@@ -557,7 +599,7 @@ given REF matrix."
            for i from 0
            when (loop for val in row
                    for j from 0
-                   unless (or (= i j) (zerop val))
+                   unless (or (= i j) (s-zerop val))
                    do (return t))
            do (return t)))))
 
