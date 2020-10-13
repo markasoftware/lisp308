@@ -447,7 +447,9 @@ given REF matrix."
      (reduce #'polynomial-binary* (cons p1 prest)))))
 
 (defun polynomial-roots (p)
-  "Solve polynomials of up to degree 2 with the quadratic formula."
+  "Solve polynomials of up to degree 2 with the quadratic formula. Real roots
+only."
+  ;; TODO: make it so it only returns real roots!
   (destructuring-bind (&optional c b a) p
     (case (length p)
       (1 (list c))
@@ -508,6 +510,11 @@ given REF matrix."
 (defun eigenvalues (mat)
   (funcall *eigenvalue-function* mat))
 
+(defun eigen-values-and-vectors (mat)
+  "Returns an alist of eigenvalues to a basis for their eigenspace."
+  (loop for evalue in (eigenvalues mat)
+     collect (cons evalue (eigenspace-basis mat evalue))))
+
 (defun diagonalize (mat)
   "Diagonalize the given matrix. Returns nil if not diagonalizable. Returns
   values D and P where P*D*P^(-1)=mat. You may want to dynamically bind
@@ -567,6 +574,23 @@ given REF matrix."
 (defun nullity (mat)
   (- (length (car mat)) (rank mat)))
 
+(defun map-matrix (fn mat)
+  "Run fn on every element of mat"
+  (loop for row in mat
+     collect (loop for col in row
+                collect (funcall fn col))))
+
+(defun ⮾ (m1 m2)
+  "Kronecker Product. Should be both row or both column vectors if vectors."
+  (loop for row1 in m1
+     append (loop for row2 in m2
+               collect (loop for col1 in row1
+                          append (loop for col2 in row2
+                                    collect (* col1 col2))))))
+
+(defun † (mat)
+  (map-matrix 'conjugate (transpose mat)))
+
 ;;;; APPLICATIONS
 
 ;; TODO: rewrite using diagonalization and fast exponentiation
@@ -578,3 +602,39 @@ given REF matrix."
   (values (round (car (mat-vec*
                        (mat-diagonalize-expt '((0 1) (1 1)) n)
                        '(0 1))))))
+
+(defvar *q-random-resolution* (expt 2 32))
+
+(defun q-gate-identity (n)
+  (make-identity (* 2 n)))
+
+(defun q-gate-h ()
+  (mat-scalar* '((1 1)
+                 (1 -1)) (/ (sqrt 2))))
+
+(defun q-gate-cnot (control-bit victim-bit)
+  (loop-2d i j n n))
+
+(defun q-offset-gate (machine-bits offset-bits gate)
+  (assert (square-p gate))
+  (⮾ (⮾ (q-gate-identity offset-bits) gate)
+     (q-gate-identity (- machine-bits (/ (length gate) 2) offset-bits))))
+
+(defun q-init (n)
+  "Initialize a state containing n qubits, all certainly zero. To apply gates,
+simply multiply a matrix on the left."
+  (loop for i from 0 below (expt 2 n)
+     collect (list (if (zerop i) 1 0))))
+
+(defun squared-magnitude (c)
+  (declare (number c))
+  (* c (conjugate c)))
+
+(defun q-measure-all (state)
+  (loop
+     for outcome-probability in (mapcar (compose 'squared-magnitude 'car) state)
+     for i from 0
+     when (< (random *q-random-resolution*)
+             (* outcome-probability *q-random-resolution*))
+     return (format nil "~b" i)
+     finally (return (format nil "~b" i))))

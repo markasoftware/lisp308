@@ -149,6 +149,22 @@
 
    | 1.618034 | -0.618034 |
    
+   #+BEGIN_SRC lisp
+   (characteristic-polynomial '((0 1)
+                                (1 1)))
+   #+END_SRC
+
+   | -1 | -1 | 1 |
+   
+   The polynomial is outputted from least to greatest power, so this is read as
+   x^2-x-1.
+
+   Eigenvalues are not calculated in a very reliable way. For 1x1 and 2x2
+   matrices, I simply use the quadratic formula, which does always find the
+   results. But for larger matrices, a trial-and-error search is conducted on
+   the inegers from -1000 to 1000; larger or fractional eigenvalues will not be
+   found. We only search for real eigenvalues in general.
+   
    #+BEGIN_SRC lisp :results org
      (eigenspace-basis '((0 1)
                          (1 1))
@@ -176,3 +192,9 @@
    
    The two matrices are D and P respectively, where PDP^(-1) = the original
    matrix.
+** Other functions
+   Most of these are tiny utilities that re-use the functionality from the main
+   functions above.
+   + ~(rank)~
+   + ~(nullity)~
+   + ~()~
