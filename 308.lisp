@@ -603,22 +603,64 @@ only."
                        (mat-diagonalize-expt '((0 1) (1 1)) n)
                        '(0 1))))))
 
+;;;; Quantum Computing
+
 (defvar *q-random-resolution* (expt 2 32))
+(defvar *q-state-tolerance* 0.00001)
+
+(defun q-near-1-p (num)
+  (< (abs (- 1 num)) *q-state-tolerance*))
+
+(defun q-state-p (state)
+  (q-near-1-p (reduce '+ state)))
+
+(defun q-unitary-p (gate)
+  (and (square-p gate)
+       (loop for row in (mat* († gate) gate)
+          for i from 0
+          always (q-near-1-p (nth i row)))))
 
 (defun q-gate-identity (n)
   (make-identity (* 2 n)))
 
-(defun q-gate-h ()
-  (mat-scalar* '((1 1)
-                 (1 -1)) (/ (sqrt 2))))
-
-(defun q-gate-cnot (control-bit victim-bit)
-  (loop-2d i j n n))
-
-(defun q-offset-gate (machine-bits offset-bits gate)
+(defun q-offset-gate (offset-bits gate)
   (assert (square-p gate))
-  (⮾ (⮾ (q-gate-identity offset-bits) gate)
-     (q-gate-identity (- machine-bits (/ (length gate) 2) offset-bits))))
+  (⮾ gate (make-identity (max 1 (* 2 offset-bits)))))
+
+(defun q-gate-preset (a b which)
+  "A gate that will turn |0> into |a>, |b>. For initializing a qubit."
+  (assert (q-near-1-p (+ (expt a 2) (expt b 2))))
+  (q-offset-gate which
+                 `((,a ,(- b))
+                   (,b ,a))))
+
+(defun q-gate-random (which &aux (1-probability (/ (random 100000) 100000)))
+  "Randomizes the state of the qubit. Only really useful for testing."
+  (q-gate-preset (sqrt (- 1 1-probability)) (sqrt 1-probability) which))
+
+(defun q-gate-h (which)
+  (q-offset-gate which
+                 (mat-scalar* '((1 1)
+                                (1 -1)) (/ (sqrt 2)))))
+
+(defun q-gate-x (which)
+  (q-offset-gate which
+                 '((0 1)
+                   (1 0))))
+
+(defun q-gate-y (which)
+  (q-offset-gate which
+                 '((1 0)
+                   (0 -1))))
+
+(defun q-gate-cnot (control-bit victim-bit
+                    &aux (n (* 2 (1+ (max control-bit victim-bit)))))
+  (loop-2d i j n n
+       (if (eq (logbitp control-bit i) (logbitp control-bit j))
+           (if (xor (eq (logbitp victim-bit i) (logbitp victim-bit j))
+                    (logbitp control-bit i))
+               1 0)
+           0)))
 
 (defun q-init (n)
   "Initialize a state containing n qubits, all certainly zero. To apply gates,
@@ -632,9 +674,121 @@ simply multiply a matrix on the left."
 
 (defun q-measure-all (state)
   (loop
+     with last-nonzero-outcome
+     with format-specifier = (format nil "~~~d,'0b" (floor (length state) 2))
      for outcome-probability in (mapcar (compose 'squared-magnitude 'car) state)
      for i from 0
+     unless (zerop outcome-probability)
+     do (setq last-nonzero-outcome i)
      when (< (random *q-random-resolution*)
              (* outcome-probability *q-random-resolution*))
-     return (format nil "~b" i)
-     finally (return (format nil "~b" i))))
+     return (format nil format-specifier i)
+     finally (return (format nil format-specifier last-nonzero-outcome))))
+
+(defun q-bit-probability (bit state)
+  "The overall probability that the given qubit will be 1 when measured."
+  (loop
+     with result = 0
+     for outcome-probability in (mapcar (compose 'squared-magnitude 'car) state)
+     for i from 0
+     when (logbitp bit i)
+     do (incf result outcome-probability)
+     finally (return result)))
+
+(defun state= (state1 state2)
+  (and (= (length state1) (length state2))
+       (loop for amplitude1 in state1
+          for amplitude2 in state2
+          always (< (abs (- amplitude1 amplitude2)) *q-state-tolerance*))))
+
+(defun q-bit-probability-distribution (bit state)
+  "All the possible states the qubit may be in, and the probability it is in
+  each, if all other bits were measured right now."
+  ;; result is an alist from states to their probabilities
+  (loop
+     with result
+     with reordered-state =
+     ;; stable keeps zeroes and ones of the Bit In Question in order
+       (stable-sort (loop for (amplitude) in state
+                       for i from 0
+                       collect (cons amplitude i))
+                    (lambda (state1 state2)
+                      (< (logandc1 (ash 1 bit) (cdr state1))
+                         (logandc1 (ash 1 bit) (cdr state2)))))
+     for ((0-amplitude) (1-amplitude)) on reordered-state by #'cddr
+     for probability = (+ (expt 0-amplitude 2) (expt 1-amplitude 2))
+     for 0-normalized = (/ 0-amplitude (sqrt probability))
+     for 1-normalized = (/ 1-amplitude (sqrt probability))
+     when (plusp probability)
+     do (let* ((0-normalized (/ 0-amplitude (sqrt probability)))
+               (1-normalized (/ 1-amplitude (sqrt probability)))
+               (result-cons (or (assoc (list 0-normalized 1-normalized) result
+                                       :test 'state=)
+                                (car (push (cons
+                                            (list 0-normalized 1-normalized)
+                                            0)
+                                           result)))))
+          (incf (cdr result-cons) probability))
+     finally (return result)))
+
+(defun q-measure-bit (bit state)
+  "Returns two values: Whether the qubit was measured as 1 and the new state"
+  (let* ((1-probability (q-bit-probability bit state))
+         (result-1 (< (random *q-random-resolution*)
+                      (* 1-probability *q-random-resolution*)))
+         ;; probability of measuring it the way it was actually measured
+         (actual-probability (if result-1 1-probability (- 1 1-probability)))
+         (probability-normalizer (sqrt actual-probability)))
+    (values
+     result-1
+     (loop
+        for (outcome-probability) in state
+        for i from 0
+        collect (list (if (eq result-1 (logbitp bit i))
+                          (/ outcome-probability probability-normalizer)
+                          0))))))
+
+(defun q-run-gate (gate state)
+  ;; "left-pad" the gate
+  (mat* (⮾ (make-identity (max 1 (- (length state)
+                                    (length gate))))
+           gate)
+        state))
+
+(defvar *q-state*)
+
+(defun q-run-gates* (&rest gates)
+  (dolist (gate gates)
+    (setf *q-state* (q-run-gate gate *q-state*))))
+
+(defun q-measure-bit* (bit)
+  (multiple-value-bind (outcome new-state) (q-measure-bit bit *q-state*)
+    (setf *q-state* new-state)
+    outcome))
+
+;;;; Applications of Quantum Computing
+
+(defun q-teleport (a b &aux (*q-state* (q-init 3)))
+  "Initializes the first qubit of the state with amplitudes a|0> and b|1>, then
+makes the third qubit have those same amplitudes, despite not applying any
+multi-qubit operations that involve the third qubit after any operations have
+been performed on the first qubit."
+  (format t "Entangling qubits~%")
+  (q-run-gates*
+   (q-gate-preset a b 0)
+   (q-gate-h 1)
+   (q-gate-cnot 1 2)
+   ;; should now be 1/sqrt2 (|00> + |11>) on last two qubits
+
+   ;; Now, the qubits are separated in space, with the first and
+   ;; second kept together, isolated from the third leave for a
+   ;; classical communications channel.
+   (q-gate-cnot 0 1)
+   (q-gate-h 0))
+
+  ;; now the person with the first two bits measures them, which informs the
+  ;; person with the third bit what to do.
+  (switch ((list (q-measure-bit* 0) (q-measure-bit* 1)) :test #'equal)
+    ('(0 0)
+      ;;TODO
+      )))
