@@ -648,19 +648,20 @@ only."
                  '((0 1)
                    (1 0))))
 
-(defun q-gate-y (which)
+(defun q-gate-z (which)
   (q-offset-gate which
                  '((1 0)
                    (0 -1))))
 
 (defun q-gate-cnot (control-bit victim-bit
-                    &aux (n (* 2 (1+ (max control-bit victim-bit)))))
+                    &aux (n (expt 2 (1+ (max control-bit victim-bit)))))
   (loop-2d i j n n
-       (if (eq (logbitp control-bit i) (logbitp control-bit j))
-           (if (xor (eq (logbitp victim-bit i) (logbitp victim-bit j))
-                    (logbitp control-bit i))
-               1 0)
-           0)))
+       ;; if the control bit is set...
+       (if (logbitp control-bit j)
+           ;; ...flip the victim bit
+           (if (eq i (logxor j (ash 1 victim-bit))) 1 0)
+           ;; otherwise, keep the state the same
+           (if (eq i j) 1 0))))
 
 (defun q-init (n)
   "Initialize a state containing n qubits, all certainly zero. To apply gates,
@@ -750,7 +751,7 @@ simply multiply a matrix on the left."
 
 (defun q-run-gate (gate state)
   ;; "left-pad" the gate
-  (mat* (⮾ (make-identity (max 1 (- (length state)
+  (mat* (⮾ (make-identity (max 1 (/ (length state)
                                     (length gate))))
            gate)
         state))
@@ -783,12 +784,32 @@ been performed on the first qubit."
    ;; Now, the qubits are separated in space, with the first and
    ;; second kept together, isolated from the third leave for a
    ;; classical communications channel.
-   (q-gate-cnot 0 1)
-   (q-gate-h 0))
-
+   (q-gate-cnot 0 1) ; if the qubit-in-question, hereafter referred to as the
+                                        ; QIQ, is zero, then bits 1 and 2 remain in their bell
+                                        ; state. But if the QIQ is one, their bell state is
+                                        ; "flipped" into |10〉+|01〉. At this point, measuring both
+                                        ; bits 1 and 2 tells us what would happen if we measure the
+                                        ; QIQ. In fact, measuring any two of the qubits tells us
+                                        ; what will happen to the last.
+   (q-gate-h 0))  ; After this, measuring bits 0 and 1 no longer tells us what 2
+                  ; will measure as.
+  
   ;; now the person with the first two bits measures them, which informs the
   ;; person with the third bit what to do.
-  (switch ((list (q-measure-bit* 0) (q-measure-bit* 1)) :test #'equal)
-    ('(0 0)
-      ;;TODO
-      )))
+  (let ((bit-0 (q-measure-bit* 0))
+        (bit-1 (q-measure-bit* 1)))
+    (format t "Measured bits as ~a and ~a.~%" bit-0 bit-1)
+    (switch ((list bit-0 bit-1) :test #'equal)
+      ('(nil nil)
+        ;; Nothing to do!
+        )
+      ('(nil t)
+        (q-run-gates* (q-gate-x 2)))
+      ('(t nil)
+        (q-run-gates* (q-gate-z 2)))
+      ('(t t)
+        (q-run-gates*
+         (q-gate-x 2)
+         (q-gate-z 2)))))
+
+  (q-bit-probability-distribution 2 *q-state*))
