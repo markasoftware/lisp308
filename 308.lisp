@@ -569,7 +569,7 @@ only."
            do (return t)))))
 
 (defun rank (mat)
-  (length (leading-var-pos mat)))
+  (length (leading-var-pos (reduce-ef mat))))
 
 (defun nullity (mat)
   (- (length (car mat)) (rank mat)))
@@ -590,6 +590,19 @@ only."
 
 (defun † (mat)
   (map-matrix 'conjugate (transpose mat)))
+
+(defun projection-matrix (basis)
+  "Create a projection matrix onto the space spanned by the given
+  basis (rowspace of parameter)"
+  (assert (= (rank basis) (length basis))) ; check it's actually a basis
+  (mat* (transpose basis) ; project it onto the new basis
+        (mat* (invert (mat* basis (transpose basis))) ; correction factor
+              basis ; find correlation with each basis vector
+              )))
+
+(defun project (vector basis)
+  "takes and returns a simple list"
+  (car (transpose (mat* (projection-matrix basis) (transpose (list vector))))))
 
 ;;;; APPLICATIONS
 
@@ -813,3 +826,20 @@ been performed on the first qubit."
          (q-gate-z 2)))))
 
   (q-bit-probability-distribution 2 *q-state*))
+
+(defun linear-regression (data)
+  "Finds the line of best fit (least squares) for the given data. Data should be
+  a list of cons, with each car being the x-value, and each cdr being the
+  y-value. Return multiple values: slope and y-intercept."
+  (assert (>= (length data) 2))
+  (assert (/= (cdar data) (cdadr data))) ; not same x-value
+  (let* ((projection
+           (project (mapcar #'cdr data)
+                    ;; assertions ensure these are lin indep
+                    (list
+                     (repeat 1 (length data))
+                     (mapcar #'car data))))
+         (slope (/ (- (lastcar projection) (car projection))
+                   (- (car (lastcar data)) (caar data))))
+         (y-int (- (car projection) (* slope (caar data)))))
+    (values slope y-int)))
