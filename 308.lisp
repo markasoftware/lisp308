@@ -407,6 +407,11 @@ given REF matrix."
       while (some #'identity ps)
       collect (apply #'+ (substitute 0 nil (mapcar #'car ps))))))
 
+(defun polynomial- (p &rest prest)
+  (if prest
+      (apply 'polynomial+ p (mapcar (curry #'mapcar #'-) prest))
+      (mapcar #'- p)))
+
 (defun polynomial* (p1 &rest prest)
   ;; this is my new favorite name for local recursive functions
   (polynomial-canonicalize
@@ -423,6 +428,29 @@ given REF matrix."
         with ps = (cons p1 prest)
         for i from 0 to (apply #'+ (mapcar (compose #'1- #'length) ps))
         collect (%%% i ps)))))
+
+(defun polynomial/ (dividend divisor)
+  "Returns multiple values: The quotient and the remainder."
+  ;; Idea of long division: The first coefficient is fully constrained by the
+  ;; ratio between the leading coefficients and the difference between the
+  ;; degree of the quotient and divisor
+  (let* ((remainder (reverse (polynomial-canonicalize dividend)))
+         (divisor (reverse (polynomial-canonicalize divisor)))
+         (quotient-degree (- (length dividend) (length divisor))))
+    (assert (not (minusp quotient-degree)) () "Dividend must have degree
+    at least as great as the divisor")
+    (loop for i from quotient-degree downto 0
+          for quotient-coefficient = (/ (car remainder) (car divisor))
+          do (setf remainder
+                   (cdr ; get rid of highest degree, since division zeroes it
+                    (polynomial- remainder
+                                 (polynomial*
+                                  divisor
+                                  ;; construct x^i
+                                  (cons quotient-coefficient
+                                        (loop repeat i collect 0))))))
+          collect quotient-coefficient into result
+          finally (return (values (reverse result) remainder)))))
 
 ;; I can't decide if I like this one or the recursive one more, so I wrote both!
 (defun polynomial-non-recursive* (p1 &rest prest)
@@ -574,6 +602,10 @@ only."
 (defun nullity (mat)
   (- (length (car mat)) (rank mat)))
 
+(defun rotation-mat (theta)
+  `((,(cos theta) ,(- (sin theta)))
+    (,(sin theta) ,(cos theta))))
+
 (defun map-matrix (fn mat)
   "Run fn on every element of mat"
   (loop for row in mat
@@ -603,6 +635,11 @@ only."
 (defun project (vector basis)
   "takes and returns a simple list"
   (car (transpose (mat* (projection-matrix basis) (transpose (list vector))))))
+
+(defun matrix->latex (mat &optional (environment "bmatrix"))
+  (format nil "\\begin{~a}~{~{~a~^&~}~^\\\\~}\\end{~a}"
+          environment mat environment))
+
 
 ;;;; APPLICATIONS
 
