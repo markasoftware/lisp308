@@ -393,7 +393,8 @@ given REF matrix."
 ;; equations on small matrices, the only ones supported.
 
 ;; A polynomial is just a list, where the first element is the coefficient of
-;; x^0, second is coefficient of x^1, etc.
+;; x^0, second is coefficient of x^1, etc. nil is a valid way to denote the zero
+;; polynomial.
 (defun polynomial-canonicalize (p)
   "Remove trailing zero-coefficient terms."
   (do ((pr (reverse p) (cdr pr)))
@@ -429,11 +430,16 @@ given REF matrix."
         for i from 0 to (apply #'+ (mapcar (compose #'1- #'length) ps))
         collect (%%% i ps)))))
 
+(defun polynomial-zerop (p)
+  (or (null p)
+      (and (not (cdr p)) (zerop (car p)))))
+
 (defun polynomial/ (dividend divisor)
   "Returns multiple values: The quotient and the remainder."
   ;; Idea of long division: The first coefficient is fully constrained by the
   ;; ratio between the leading coefficients and the difference between the
   ;; degree of the quotient and divisor
+  (assert (not (polynomial-zerop divisor)) (divisor))
   (let* ((remainder (reverse (polynomial-canonicalize dividend)))
          (divisor (reverse (polynomial-canonicalize divisor)))
          (quotient-degree (- (length dividend) (length divisor))))
@@ -450,7 +456,7 @@ given REF matrix."
                                   (cons quotient-coefficient
                                         (loop repeat i collect 0))))))
           collect quotient-coefficient into result
-          finally (return (values (reverse result) remainder)))))
+          finally (return (values (reverse result) (reverse remainder))))))
 
 ;; I can't decide if I like this one or the recursive one more, so I wrote both!
 (defun polynomial-non-recursive* (p1 &rest prest)
@@ -485,6 +491,25 @@ only."
       (3 (list
           (/ (+ (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a))
           (/ (- (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a)))))))
+
+(defun polynomial-degree (p)
+  "Degree. If already canonicalized, just use (length)"
+  (length (polynomial-canonicalize p)))
+
+(defun polynomial-gcd (a &rest bs)
+  (flet ((polynomial-gcd-2 (a b)
+           (assert (not (polynomial-zerop a)))
+           (assert (not (polynomial-zerop b)))
+           (when (> (polynomial-degree b) (polynomial-degree a))
+             (psetq a b b a))
+           ;; basically Euclid's algorithm
+           (loop
+              do (format t "a: ~a b: ~a~%" a b)
+              until (polynomial-zerop b)
+              do (psetq a b
+                        b (cadr (multiple-value-list (polynomial/ a b))))
+              finally (return (polynomial/ a (list (lastcar a)))))))
+    (reduce #'polynomial-gcd-2 (cons a bs))))
 
 ;; I originally wrote this by passing the addition and multiplication functions
 ;; to (determinant-permutation) instead of copy-pasting the
