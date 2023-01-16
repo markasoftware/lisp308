@@ -99,6 +99,31 @@
    will be 3x6."
   (apply (curry #'mapcar #'append) (cons mat mats)))
 
+(defmacro domat (mat (elt-sym &optional (i-sym (gensym "I")) (j-sym (gensym "J"))) &body body)
+  "Evaluate the body on every element of the given matrix, binding i-sym to the row number and j-sym to the column number (both 0-indexed) while evaluating body."
+  (declare (symbol elt-sym i-sym j-sym))
+  (alexandria:with-gensyms (row-sym)
+    `(loop for ,i-sym from 0
+           for ,row-sym in ,mat
+           do (loop for ,j-sym from 0
+                    for ,elt-sym in ,row-sym
+                    do (progn ,@body)))))
+
+(defun mat-frobenius-norm (mat)
+  "Treat the matrix as a vector, and return its l2-norm. Returns 0 on empty matrix."
+  (let ((sum 0))
+    (domat mat (elt)
+      (setf sum (+ sum (expt elt 2))))
+    (sqrt sum)))
+
+(defun mat-infinity-norm (mat)
+  "Return the matrix entry with the largest magnitude, breaking ties arbitrarily. Returns 0 on empty matrix."
+  (let ((max 0))
+    (domat mat (elt)
+      (when (> (abs elt) (abs max))
+        (setf max elt)))
+    max))
+
 (defmacro row-opf (mat-place op-list-place op)
   (with-gensyms (evaled-op)
     `(let ((,evaled-op (list ,@op)))
@@ -575,11 +600,12 @@ only."
                                            (select-by-mat perm-mat mat))))))
 
 (defun eigenvalue-p (mat r)
-  "Determine if r is an eigenvalue of mat."
+  "Determine if r is an exact eigenvalue of mat."
   (assert (square-p mat))
   (not (nonsingular-p (mat+ mat (mat-scalar* (make-identity (length mat)) (- r))))))
 
 (defun eigenspace-basis (mat r)
+  "Find the basis of the eigenspace for the exact eigenvalue r of matrix r."
   (assert (square-p mat))
   (nullspace-basis (mat+ mat (mat-scalar* (make-identity (length mat)) (- r)))))
 
@@ -588,17 +614,34 @@ only."
   attempt all integers between start and end."
   (remove-if-not (curry #'eigenvalue-p mat) (iota (- end start) :start start)))
 
+(defun vector-normalize (vec &optional (norm-fn 'mat-frobenius-norm))
+  "Given a vector (which can really be any matrix), return a version with norm 1. Assumes that norm-fn is linear with respect to multiplication of the vector by scalars."
+  (mat-scalar* vec (/ (funcall norm-fn vec))))
+
+(defun random-unit-vector (n)
+  "Return a random n*1 real unit vector, randomly distributed over the (n-1)-sphere"
+  ;; https://angms.science/doc/RM/randUnitVec.pdf
+  (vector-normalize (loop repeat n collect (list (alexandria:gaussian-random -1 1)))))
+
+(defun max-eigenvalue-power (mat &key initial-vector (epsilon 0.00001))
+  "Use the power method to find the maximum eigenvalue. Returns an eigenvector as a multiple value. Stops iterating once the computed eigenvalue from two subsequent iterations are within epsilon of each other."
+  (assert (square-p mat))
+  (loop for old-x = (or initial-vector
+                        (random-unit-vector (length mat)))
+          then (vector-normalize new-x)
+        for new-x = (mat* mat old-x)
+        for previous-estimate = most-positive-fixnum then estimate
+        for estimate = (mat-infinity-norm new-x)
+        while (> (abs (- estimate previous-estimate)) epsilon)
+        ;; don't need to divide estimate by previous-estimate as indicated in textbook because normalizing the vector each iteration is equivalent to dividing the next x by the current |x|.
+        finally (return estimate)))
+
 (defun eigenvalues-roots (mat)
   (assert (square-p mat))
   (assert (<= (length mat) 2))
   (polynomial-roots (characteristic-polynomial mat)))
 
-(defun eigenvalues-reasonable (mat)
-  (if (<= (length mat) 2)
-      (eigenvalues-roots mat)
-      (eigenvalues-integers mat)))
-
-(defvar *eigenvalue-function* #'eigenvalues-reasonable
+(defvar *eigenvalue-function* #'eigenvalues-roots
   "The function to call to find the eigenvalues of a matrix. You should
   dynamically bind this if the default implementation doesn't find your
   eigenvalues.")
