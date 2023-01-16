@@ -236,12 +236,16 @@ value and not re-use the argument."
     (map-permutations (lambda (p) (push p result)) (iota n))
     result))
 
+(defun make-permutation-matrix (perm-list)
+  "Given a permutation represented as a list (ie, the 0-th element of the list says where the 0 is mapped to), return a corresponding permutation matrix."
+  (loop with n = (length perm-list)
+        for perm-destination in perm-list
+        collect (loop for perm-possible-destination from 0 below n
+                      collect (if (= perm-possible-destination perm-destination) 1 0))))
+
 (defun permutation-matrices (n)
   "Generate all n*n permutation matrices."
-  (loop for perm in (permutation-lists n)
-     collect (loop for row in perm
-                collect (loop for j from 0 below n
-                           collect (if (= j row) 1 0)))))
+  (mapcar 'make-permutation-matrix (permutation-lists n)))
 
 (defun select-by-mat (selection main)
   "Return a list of the values in main, from top left to bottom right in
@@ -440,23 +444,49 @@ given REF matrix."
   ;; ratio between the leading coefficients and the difference between the
   ;; degree of the quotient and divisor
   (assert (not (polynomial-zerop divisor)) (divisor))
-  (let* ((remainder (reverse (polynomial-canonicalize dividend)))
-         (divisor (reverse (polynomial-canonicalize divisor)))
-         (quotient-degree (- (length dividend) (length divisor))))
-    (assert (not (minusp quotient-degree)) () "Dividend must have degree
-    at least as great as the divisor")
-    (loop for i from quotient-degree downto 0
-          for quotient-coefficient = (/ (car remainder) (car divisor))
-          do (setf remainder
-                   (cdr ; get rid of highest degree, since division zeroes it
-                    (polynomial- remainder
-                                 (polynomial*
-                                  divisor
-                                  ;; construct x^i
-                                  (cons quotient-coefficient
-                                        (loop repeat i collect 0))))))
-          collect quotient-coefficient into result
-          finally (return (values (reverse result) (reverse remainder))))))
+  (loop with remainder = (polynomial-canonicalize dividend)
+        with divisor-deg = (polynomial-degree divisor)
+        with quotient-degree = (- (polynomial-degree dividend) divisor-deg)
+        for i from quotient-degree downto 0
+        ; multiply divisor by quotient coefficient to cancel out leading term of remainder
+        for quotient-coefficient = (/ (or (nth (+ divisor-deg i) remainder) 0) (lastcar divisor))
+        do (setf remainder
+                 (polynomial- remainder
+                              (polynomial*
+                               divisor
+                               (list quotient-coefficient)
+                               ;; construct x^i
+                               (loop for k from 0 to i
+                                     collect (if (= k i) 1 0)))))
+        collect quotient-coefficient into result
+        finally (return
+                  (values (polynomial-canonicalize (reverse result))
+                          (polynomial-canonicalize remainder)))))
+
+(defun polynomial-expt (p n)
+  "Naively exponentiate the given polynomial"
+  (declare (number n))
+  ;; a non-naive example might be doing it in logarithmic time by splitting the
+  ;; exponent by powers of two, or maybe calculating the exponents directly
+  ;; using the binomial theorem (though factorials may present their own
+  ;; optimization problem)
+  (if (zerop n)
+      '(1)
+      (loop repeat n
+            for result = p then (polynomial* result p)
+            finally (return result))))
+
+(defun polynomial-evaluate (p1 p2)
+  "Substitute p2 as the 'x' in p1. p2 should be a whole polynomial, not just a
+  number."
+  (loop for i from 0
+        for coef in p1
+        for result = (polynomial+
+                      result
+                      (polynomial*
+                       (list coef)
+                       (polynomial-expt p2 i)))
+        finally (return result)))
 
 ;; I can't decide if I like this one or the recursive one more, so I wrote both!
 (defun polynomial-non-recursive* (p1 &rest prest)
@@ -493,8 +523,8 @@ only."
           (/ (- (- b) (sqrt (- (* b b) (* 4 a c)))) (* 2 a)))))))
 
 (defun polynomial-degree (p)
-  "Degree. If already canonicalized, just use (length)"
-  (length (polynomial-canonicalize p)))
+  "Returns -1 for the zero polynomial."
+  (1- (length (polynomial-canonicalize p))))
 
 (defun polynomial-gcd (a &rest bs)
   (flet ((polynomial-gcd-2 (a b)
@@ -510,6 +540,20 @@ only."
                         b (cadr (multiple-value-list (polynomial/ a b))))
               finally (return (polynomial/ a (list (lastcar a)))))))
     (reduce #'polynomial-gcd-2 (cons a bs))))
+
+(defun polynomial-to-string (p)
+  "Polynomial to human-readable string."
+  (loop with p = (reverse (polynomial-canonicalize p))
+        with result = ""
+        for deg from (1- (length p)) downto 0
+        for coef in p
+        for degstr = (case deg
+                       (0 "")
+                       (1 "x")
+                       (otherwise (concatenate 'string "x^" (write-to-string deg))))
+        for sep = "" then " + "
+        do (setf result (concatenate 'string result sep (write-to-string coef) degstr))
+        finally (return result)))
 
 ;; I originally wrote this by passing the addition and multiplication functions
 ;; to (determinant-permutation) instead of copy-pasting the
