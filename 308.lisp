@@ -30,6 +30,12 @@
 (defun flat-to-column (flat)
   (mapcar #'list flat))
 
+(defun flat-dot (f1 f2)
+  "Dot product of two flats"
+  (loop for c in f1
+        for q in f2
+        sum (* c q)))
+
 (defun mat-row (mat i)
   "Return i-th (0-indexed) row as a 1*n matrix."
   (flat-to-row (mat-row-flat mat i)))
@@ -251,11 +257,17 @@ value and not re-use the argument."
 
 
 (defun upper-triangular-p (mat &optional (tolerance 0))
+
+(defun upper-triangular-p (mat &key (tolerance 0) (num-subdiagonals-allowed 0))
+  "Check that the matrix is upper triangular, perhaps with a floating point tolerance and a number of allowed nonzero subdiagonals."
   (loop for row in mat
-        for i from 0
-        always (loop repeat i
+        for i from num-subdiagonals-allowed
+        always (loop repeat (max i 0)
                      for col in row
                      always (<= (abs col) tolerance))))
+
+(defun hessenberg-p (mat &key (tolerance 0))
+  (upper-triangular-p mat :tolerance tolerance :num-subdiagonals-allowed 1))
 
 (defun make-change-of-basis-mat (old-basis new-basis)
   (mat* (invert (transpose new-basis)) (transpose old-basis)))
@@ -798,12 +810,42 @@ only."
           (mat-scalar* (mat* (flat-to-column u) (flat-to-row u))
                        (/ -2 (flat-2-norm-squared u))))))
 
+;; of course, calling any of the procedures in this file "fast" is a bit of a joke -- we're using freaking linked lists for the matrices
+(defun householder-right-multiply-fast (mat u &optional (u-i -1))
+  "Compute M*Q, where Q is the householder matrix corresponding to the (flat) vector u, in O(N^2) time. If you know that the u vector was calculated based on a certain row, provide that as u-i."
+  (loop with beta = (/ 2 (flat-2-norm-squared u)) ; technically we already computed the square norm while computing u, but oh well.
+        for row in mat
+        for i from 0
+        collect (flet ((row-minus-u (k)
+                         "Compute the row minus ku"
+                         (loop for c in row
+                               for q in u
+                               collect (- c (* k q)))))
+                  (cond
+                    ((< i u-i) row) ; noop
+                    ((= i u-i) (row-minus-u 1))
+                    ((> i u-i) (row-minus-u (* beta (flat-dot u row))))))))
+
+(defun householder-left-multiply-fast (mat u &optional (u-i -1))
+  "Compute Q*M (see -right-)"
+  ;; ahhh (read as a screaming ahh, not a relaxing ahh)
+  ;; but it is still O(N^2), you gotta give me that!
+  (transpose (householder-right-multiply-fast (transpose mat) u u-i)))
+
 (defun householder-qr-reduction-one-column (mat j)
   "Perform one step of the Householder qr reduction, returning a cons cell with the Q and R matrices."
   (let* ((u (householder-u-vector (mat-column-flat mat j) j))
          (q (householder-q-matrix u)))
     ;; there's in fact a pretty simple way fast way to compute Q*M here without explicit matrix multiplication. In fact, the other way has n^2 complexity instead of n^3, but oh well.
-    (cons q (mat* q mat))))
+    (cons q (householder-left-multiply-fast mat u j))))
+
+(defun householder-hessenberg-reduction-one-column (mat j)
+  "Perform one step of Householder reduction to Hessenberg form, returning a cons cell with the u vector used to perform this step of the reduction followed by the updated matrix."
+  (let ((u (householder-u-vector (mat-column-flat mat j) (1+ j))))
+    (cons u (householder-right-multiply-fast
+             (householder-left-multiply-fast mat u j)
+             u) ; (don't specify column here, we need to subtract copies from all rows.
+          )))
 
 (defun qr-decompose (mat)
   (assert (square-p mat))
@@ -817,11 +859,32 @@ only."
             for q = cur-q then (mat* q cur-q)
             finally (return (cons q r))))))
 
+(defun householder-hessenberg (mat)
+  "Return a hessenberg form matrix which is similar to the given one, by applying Householder transformations. Returns two values: The reduced matrix, and then a list of the Householder u vectors used, in order from last applied to first applied, so that the result R=QMQ where Q is formed by multiplying together the Q matrices for each u vector (either in the order returned or backward, should be the same since that's just the transpose, but Q matrices are symmetric)."
+  (assert (square-p mat))
+  ;; Instead of having column-needs-work everywhere, we could make the choice to allow all-0 u vectors. But nah.
+  (flet ((column-needs-work (j)
+           (not (every #'zerop (nthcdr (+ 2 j) (mat-column-flat mat j))))))
+    (let ((n (length mat)))
+      (loop with all-us
+            for j from 0 below (- n 2)
+            do (when (column-needs-work j)
+                 (destructuring-bind (new-u . next-mat)
+                     (householder-hessenberg-reduction-one-column mat j)
+                   (push new-u all-us)
+                   (setf mat next-mat)))
+            finally (return (values mat all-us))))))
+
+(defun us-to-q (us)
+  "Mainly to take the list of us returned as a second value from householder-hessenberg and turn it into a concrete matrix."
+  (assert us) ; no empty list allowed, don't even know dimension of identity to construct in that case.
+  (reduce 'mat* (mapcar 'householder-q-matrix us)))
+
 (defun mat= (mat1 mat2 &optional (tolerance 0.0001))
   "Check that two matrices are equal within a tolerance, which is checked per-entry (there's definitely a better way...)"
   (and (= (length mat1) (length mat2))
        (= (length (car mat1)) (length (car mat2)))
-       (loop for row1 in mat2
+       (loop for row1 in mat1
              for row2 in mat2
              always (loop for c1 in row1
                           for c2 in row2
@@ -833,9 +896,25 @@ only."
     ;; check orthonormal:
     (assert (mat= (make-identity (length q)) (mat* q (transpose q))))
     ;; check upper triangular
-    (assert (upper-triangular-p r 0.0001))
+    (assert (upper-triangular-p r :tolerance 0.0001))
     ;; check it's actually a decomposition:
     (assert (mat= mat (mat* q r)))
+    t))
+
+(defun check-householder-hessenberg (mat)
+  "Debugging: Reduce to hessenberg form, make sure it's actually in hessenberg form and that it's similar."
+  (multiple-value-bind (result us)
+      (householder-hessenberg mat)
+    ;; Check hessenberg
+    (assert (hessenberg-p result))
+    ;; Check similarity
+    (when us)
+    (cond
+      (us
+       (let ((q (us-to-q us)))
+         (assert (mat= result (mat* (mat* q mat) q)))))
+      (t ; us is empty
+       (assert (mat= result mat))))
     t))
 
 (defun project (vector basis)
