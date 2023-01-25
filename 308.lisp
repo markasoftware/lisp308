@@ -19,6 +19,29 @@
       collect (loop for ,j-var from 0 below ,width
                  collect (progn ,@body))))
 
+(defun mat-row-flat (mat i)
+  "Return i-th (0-indexed) row as a \"flat list\"."
+  (nth i mat))
+
+(defun flat-to-row (flat)
+  "Convert a \"flat list\" to a 1*n matrix."
+  (list flat))
+
+(defun flat-to-column (flat)
+  (mapcar #'list flat))
+
+(defun mat-row (mat i)
+  "Return i-th (0-indexed) row as a 1*n matrix."
+  (flat-to-row (mat-row-flat mat i)))
+
+(defun mat-column-flat (mat j)
+  "Return j-th (0-indexed) column as a \"flat list\"."
+  (loop for row in mat collect (nth j row)))
+
+(defun mat-column (mat j)
+  "Return j-th (0-indexed) column as an n*1 matrix."
+  (flat-to-column (mat-column-flat mat j)))
+
 (defun perform-row-op (mat op)
   (ecase (car op)
     (:swap                              ; (:swap i1 i2)
@@ -108,6 +131,12 @@
            do (loop for ,j-sym from 0
                     for ,elt-sym in ,row-sym
                     do (progn ,@body)))))
+
+(defun flat-2-norm-squared (vec)
+  (loop for i in vec summing (expt i 2)))
+
+(defun flat-2-norm (vec)
+  (sqrt (flat-2-norm-squared vec)))
 
 (defun mat-frobenius-norm (mat)
   "Treat the matrix as a vector, and return its l2-norm. Returns 0 on empty matrix."
@@ -219,6 +248,14 @@ value and not re-use the argument."
                        (setf leaders (cdr leaders))
                        (setf augmented-col (cdr augmented-col)))
                      0)))))
+
+
+(defun upper-triangular-p (mat &optional (tolerance 0))
+  (loop for row in mat
+        for i from 0
+        always (loop repeat i
+                     for col in row
+                     always (<= (abs col) tolerance))))
 
 (defun make-change-of-basis-mat (old-basis new-basis)
   (mat* (invert (transpose new-basis)) (transpose old-basis)))
@@ -743,6 +780,63 @@ only."
         (mat* (invert (mat* basis (transpose basis))) ; correction factor
               basis ; find correlation with each basis vector
               )))
+
+(defun householder-u-vector (v k)
+  "Compute the householder \"u\" vector that will zero out elements of the flat v strictly after the k-th (0-indexed) component."
+  (declare ((integer 0) k))
+  (let ((vk-onwards (nthcdr k v)))
+    `(,@(repeat 0 k)
+      ,(+ (car vk-onwards)
+          (* (if (plusp (car vk-onwards)) -1 1)
+             (flat-2-norm vk-onwards)))
+      ,@(cdr vk-onwards))))
+
+(defun householder-q-matrix (u)
+  "Given a flat u from householder-u-vector, explicitly construct the corresponding Q matrix. Note that typically, the Q matrix is not explicitly constructed, and the matrix QA or QAQ can be computed more quickly by taking advantage of the expression for the Q matrix."
+  (let ((n (length u)))
+    (mat+ (make-identity n)
+          (mat-scalar* (mat* (flat-to-column u) (flat-to-row u))
+                       (/ -2 (flat-2-norm-squared u))))))
+
+(defun householder-qr-reduction-one-column (mat j)
+  "Perform one step of the Householder qr reduction, returning a cons cell with the Q and R matrices."
+  (let* ((u (householder-u-vector (mat-column-flat mat j) j))
+         (q (householder-q-matrix u)))
+    ;; there's in fact a pretty simple way fast way to compute Q*M here without explicit matrix multiplication. In fact, the other way has n^2 complexity instead of n^3, but oh well.
+    (cons q (mat* q mat))))
+
+(defun qr-decompose (mat)
+  (assert (square-p mat))
+  (flet ((column-needs-work (j)
+           (not (every #'zerop (nthcdr (1+ j) (mat-column-flat mat j))))))
+    (let ((n (length mat)))
+      (loop for j from 0 below (1- n)   ; skip last column
+            for (cur-q . r) = (if (column-needs-work j)
+                                  (householder-qr-reduction-one-column (if (= 0 j) mat r) j)
+                                  (cons (make-identity n) (if (= 0 j) mat r)))
+            for q = cur-q then (mat* q cur-q)
+            finally (return (cons q r))))))
+
+(defun mat= (mat1 mat2 &optional (tolerance 0.0001))
+  "Check that two matrices are equal within a tolerance, which is checked per-entry (there's definitely a better way...)"
+  (and (= (length mat1) (length mat2))
+       (= (length (car mat1)) (length (car mat2)))
+       (loop for row1 in mat2
+             for row2 in mat2
+             always (loop for c1 in row1
+                          for c2 in row2
+                          always (< (abs (- c1 c2)) tolerance)))))
+
+(defun check-qr-decompose (mat)
+  "Debugging; run qr decomposition, try to put it back together and assert it's still the same."
+  (destructuring-bind (q . r) (qr-decompose mat)
+    ;; check orthonormal:
+    (assert (mat= (make-identity (length q)) (mat* q (transpose q))))
+    ;; check upper triangular
+    (assert (upper-triangular-p r 0.0001))
+    ;; check it's actually a decomposition:
+    (assert (mat= mat (mat* q r)))
+    t))
 
 (defun project (vector basis)
   "takes and returns a simple list"
