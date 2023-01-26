@@ -256,8 +256,6 @@ value and not re-use the argument."
                      0)))))
 
 
-(defun upper-triangular-p (mat &optional (tolerance 0))
-
 (defun upper-triangular-p (mat &key (tolerance 0) (num-subdiagonals-allowed 0))
   "Check that the matrix is upper triangular, perhaps with a floating point tolerance and a number of allowed nonzero subdiagonals."
   (loop for row in mat
