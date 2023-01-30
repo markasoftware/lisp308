@@ -144,6 +144,9 @@
 (defun flat-2-norm (vec)
   (sqrt (flat-2-norm-squared vec)))
 
+(defun flat-scalar* (vec r)
+  (loop for c in vec collect (* c r)))
+
 (defun mat-frobenius-norm (mat)
   "Treat the matrix as a vector, and return its l2-norm. Returns 0 on empty matrix."
   (let ((sum 0))
@@ -633,7 +636,7 @@ only."
 ;; returns an integer, not a degree-zero polynomial. Since I have no intention
 ;; of expanding this project to work on arbitrary fields and vector spaces, I
 ;; opted to copy-paste instead.
-(defun characteristic-polynomial (mat)
+(defun characteristic-polynomial-det (mat)
   (assert (square-p mat))
   (let ((mat (loop for row in mat
                 for i from 0
@@ -686,7 +689,7 @@ only."
 (defun eigenvalues-roots (mat)
   (assert (square-p mat))
   (assert (<= (length mat) 2))
-  (polynomial-roots (characteristic-polynomial mat)))
+  (polynomial-roots (characteristic-polynomial-det mat)))
 
 (defvar *eigenvalue-function* #'eigenvalues-roots
   "The function to call to find the eigenvalues of a matrix. You should
@@ -914,6 +917,42 @@ only."
       (t ; us is empty
        (assert (mat= result mat))))
     t))
+
+(defun krylov-method-augmented-system (mat starting-vector)
+  "Return two values: The system of equations to solve, as a matrix, and then the b vector of contsants (ie augmented column)."
+  (assert mat)
+  (assert (square-p mat))
+  (let* ((n (length mat))
+         (x (flat-to-column starting-vector))
+         (system-cols (loop repeat n
+                            collect x
+                            do (setf x (mat* mat x))))
+         (system-mat (apply 'mat-append-cols system-cols)))
+    ;; x was already multiplied by mat "one too many times", so it's the (opposite of the) augmented column.
+    (values system-mat (mat-scalar* x -1))))
+
+(defun characteristic-polynomial-krylov (mat &optional starting-vector)
+  "Compute the characteristic polynomial using Krylov's Method. Optionally, provide
+a (flat) initial vector (for some matrices, a good choice of starting vector is
+necessary to ensure there's a unique solution). If there is no unique solution, returns nil, which might be ambiguous if empty matrices are allowed, but let's not go there."
+  (assert mat)                          ; nonempty
+  (assert (square-p mat))
+  (multiple-value-bind (system-mat augmented-col)
+      (krylov-method-augmented-system mat (or starting-vector (loop repeat (length mat) collect 1)))
+    (let ((augmented-system-mat (mat-append-cols system-mat augmented-col)))
+      ;; This is quite inefficient because it checks the determinant, which is half of what we were trying to avoid, but oh well. Just remove the check if you care!
+      (when (nonsingular-p system-mat)
+        ;; Without the possible multiplication by -1, you would still get a polynomial with roots in the same places, but this is to get it to line up with the definition of charpoly.
+        (flat-scalar* (append (solve augmented-system-mat) '(1))
+                      (expt -1 (length mat)))))))
+
+(defun check-krylov (mat &optional starting-vector)
+  "Since this doesn't use any tolerance, will only reliably work on matrices with exact entries."
+  (assert (equal (if starting-vector
+                     (characteristic-polynomial-krylov mat starting-vector)
+                     (characteristic-polynomial-krylov mat))
+                 (characteristic-polynomial-det mat)))
+  t)
 
 (defun project (vector basis)
   "takes and returns a simple list"
